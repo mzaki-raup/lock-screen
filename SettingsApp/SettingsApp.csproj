@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <Version>1.1.1.0</Version>
+        <FileVersion>1.1.1.0</FileVersion>
+        <AssemblyVersion>1.1.1.0</AssemblyVersion>
+        <SourceRevisionId>20260123.2224</SourceRevisionId>
+        <InformationalVersion>1.1.1.0</InformationalVersion>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+        <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+        <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <UseWPF>true</UseWPF>
+        <ApplicationIcon>Assets\Settings.ico</ApplicationIcon>
+        <AssemblyName>Settings</AssemblyName>
+        <PackageId>Settings</PackageId>
+        <Product>Settings</Product>
+        <Title>Settings</Title>
+        <FileDescription>Settings application for managing configurations</FileDescription>
+        <Company>Procybro Solutions</Company>
+        <Authors>Mohd Zaki Raup</Authors>
+        <Copyright>©2026 Procybro Solutions</Copyright>
+        <ContinuousIntegrationBuild>false</ContinuousIntegrationBuild>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="INIFileParserDotNetCore" Version="2.5.2" />
+      <PackageReference Include="SharpHook" Version="7.1.1" />
+      <PackageReference Include="SharpHook.Reactive" Version="7.1.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Resource Include="Assets\Settings.ico" />
+    </ItemGroup>
+
+</Project>

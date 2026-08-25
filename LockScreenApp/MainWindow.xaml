@@ -1,0 +1,11 @@
+<Window x:Class="LockScreenApp.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Topmost="True"
+        WindowState="Normal"
+        ShowInTaskbar="False"
+        Background="Transparent">
+    <Grid x:Name="OverlayGrid" Background="Transparent"/>
+</Window>
