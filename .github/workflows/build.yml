@@ -11,6 +11,27 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Compiled artifacts live outside the workspace, because the first step of
+# every job wipes the workspace -- the checkout is done by hand, this instance
+# having no published actions to do it. Without this each job was a cold
+# compile of 74 dependencies, three times over: debug for `cargo test`, release
+# for `clippy --all-targets`, release for the build. Releases had grown from
+# 135 seconds to sixteen minutes.
+#
+# Both workflows deliberately point at the **same** directory. A release pushes
+# a branch and then a tag, so build.yml and release.yml run the same four gates
+# on the same commit; sharing the cache means the second one recompiles
+# nothing instead of repeating the first. If they ever overlap, cargo's own
+# lock on the directory serialises them, which is what a single runner does
+# anyway.
+#
+# Forward slashes on purpose: PowerShell and cargo both accept them, and they
+# cannot be mangled by a shell on the way into this file.
+env:
+  CARGO_TARGET_DIR: C:/ci-cache/lock-screen/target
+  # A failed crate download should not fail a release.
+  CARGO_NET_RETRY: "10"
+
 defaults:
   run:
     shell: pwsh
@@ -30,6 +51,32 @@ jobs:
           git -c "http.extraheader=Authorization: Basic $basic" fetch --quiet --depth=1 origin ${{ github.sha }}
           git checkout --quiet --detach FETCH_HEAD
           git log --oneline -1
+
+      # The build cache this job depends on, checked before anything needs it.
+      #
+      # Two jobs in one: make sure the directory can exist at all, so a
+      # permissions problem is a named failure here rather than a confusing
+      # cargo error three steps later; and keep it from filling the runner's
+      # disk. It grows by design -- every commit leaves artifacts behind, and
+      # it was 939 MB after a single commit's worth of gates.
+      #
+      # Free space rather than the cache's own size, because measuring free
+      # space is instant while walking a multi-gigabyte tree is not, and
+      # running out of disk is the actual risk. Clearing it costs one cold
+      # build, which is what every job cost before this existed.
+      - name: Build cache
+        run: |
+          New-Item -ItemType Directory -Force $env:CARGO_TARGET_DIR | Out-Null
+          if (-not (Test-Path $env:CARGO_TARGET_DIR)) {
+            throw "$env:CARGO_TARGET_DIR could not be created; the runner may not be able to write there"
+          }
+          $drive = (Get-Item $env:CARGO_TARGET_DIR).PSDrive.Name
+          $free = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)
+          Write-Host "cache at $env:CARGO_TARGET_DIR, $free GB free on ${drive}:"
+          if ($free -lt 10) {
+            Write-Host 'under 10 GB free: clearing the cache, so this build is a cold one'
+            Remove-Item "$env:CARGO_TARGET_DIR/*" -Recurse -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Use the latest stable Rust
         run: |
@@ -56,5 +103,5 @@ jobs:
       # discovered at release time.
       - name: Size
         run: |
-          $exe = Get-Item target/release/LockScreen.exe
+          $exe = Get-Item "$env:CARGO_TARGET_DIR/release/LockScreen.exe"
           "LockScreen.exe {0:N0} bytes ({1:N0} KB)" -f $exe.Length, ($exe.Length / 1KB)

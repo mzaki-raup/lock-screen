@@ -153,6 +153,14 @@ the tag, which fails the publish step after the build has already succeeded.
 The tag must match the version in the workspace `Cargo.toml`, and `Cargo.lock`
 has to move with it in the same commit, because every step runs `--locked`.
 
+Compiled artifacts in CI live in `C:/ci-cache/lock-screen/target`, outside the
+workspace, because the first step of every job wipes the workspace. Both
+workflows share that directory on purpose: a release pushes a branch and then a
+tag, so `build.yml` and `release.yml` run the same four gates on the same
+commit, and the second one then recompiles nothing. Measured locally, the four
+gates are 85 seconds cold and 20 warm. Do not move the target directory back
+inside the workspace without reading that sentence twice.
+
 Releases are **unsigned**, deliberately, as of 9 October 2026. The Sign step
 works and is tested, but a publicly trusted certificate cannot live in a CI
 secret — code-signing keys must be held in hardware — so signing needs a
