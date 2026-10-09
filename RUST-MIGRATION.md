@@ -842,7 +842,10 @@ certificate in phase 06, which the release workflow needs anyway.
 > an exportable PFX for an OV or EV certificate. `signtool verify` correctly refuses such a
 > signature, which means "get a certificate" is really "choose a key-holding signing service"
 > (Azure Trusted Signing, DigiCert KeyLocker, SSL.com eSigner) or "accept that CI cannot sign".
-> A decision with a recurring cost, not a code change.
+> A decision with a recurring cost, not a code change. **Taken on 9 October 2026: stay unsigned.**
+> `SHA256SUMS` still covers a network attacker and a truncated download; what remains uncovered is a
+> compromise of `git.zacx.net` itself, and Windows will show "Unknown Publisher". The step is in
+> place and tested, so adopting a signing service later is configuration rather than work.
 
 ---
 

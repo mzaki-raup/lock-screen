@@ -127,6 +127,21 @@ Learned the hard way; each cost real time.
 - **Low-level hooks must be fast.** Windows removes a hook whose callback
   overruns `LowLevelHooksTimeout`. Set a flag and return.
 
+## Releases
+
+Tag `vX.Y.Z` and push the tag **on its own**, after the branch has landed —
+pushing both refs in one `git push` has left the forge without its own row for
+the tag, which fails the publish step after the build has already succeeded.
+The tag must match the version in the workspace `Cargo.toml`, and `Cargo.lock`
+has to move with it in the same commit, because every step runs `--locked`.
+
+Releases are **unsigned**, deliberately, as of 9 October 2026. The Sign step
+works and is tested, but a publicly trusted certificate cannot live in a CI
+secret — code-signing keys must be held in hardware — so signing needs a
+key-holding service. See `PARITY.md` §4. Do not add a self-signed certificate
+to make the step pass: the verification refuses it on purpose, because a
+signature that does not chain to a trusted root looks like assurance and is not.
+
 ## Credentials
 
 Passwords are **Argon2id verifiers**, never recoverable. The .NET version stores
