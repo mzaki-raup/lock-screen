@@ -18,12 +18,14 @@
 //! - [`log`] is the one place anything is written to disk for diagnostics,
 //!   replacing the seven `catch { }` blocks the .NET version swallows failures
 //!   in.
+//! - [`release`] decides which published release, if any, is worth offering.
 //! - [`sound`] is the handful of system sounds the UI plays.
 
 pub mod config;
 pub mod credential;
 pub mod log;
 pub mod paths;
+pub mod release;
 pub mod sound;
 
 #[cfg(windows)]

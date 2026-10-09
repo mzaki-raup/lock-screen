@@ -117,6 +117,12 @@ fn run(mode: Mode) -> Result<(), String> {
         ));
     }
 
+    // Delete the renamed-aside copy a previous update left behind. It cannot
+    // be removed during the update itself: it is the image that process was
+    // running from.
+    #[cfg(windows)]
+    win::update::clean_up();
+
     let config = config::load(&config_path).map_err(|e| format!("{} could not be read: {e}", config_path.display()))?;
 
     match mode {

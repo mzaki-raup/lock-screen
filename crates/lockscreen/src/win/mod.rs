@@ -17,12 +17,14 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 pub mod backdrop;
 pub mod hello;
 pub mod hooks;
+pub mod http;
 pub mod monitors;
 pub mod overlay;
 pub mod settings;
 pub mod setup;
 pub mod ui;
 pub mod unlock;
+pub mod update;
 pub mod voice;
 
 /// This module's `HINSTANCE`, for window class registration.

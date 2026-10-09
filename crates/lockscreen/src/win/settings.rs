@@ -36,7 +36,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::PCWSTR;
 use zeroize::Zeroizing;
 
-use super::{ui, voice};
+use lockscreen_core::release;
+
+use super::{ui, update, voice};
 
 const ID_TITLE: u16 = 30;
 const ID_TRANSPARENCY: u16 = 31;
@@ -47,6 +49,7 @@ const ID_PASSWORD: u16 = 35;
 const ID_PASSWORD_AGAIN: u16 = 36;
 const ID_MASTER: u16 = 37;
 const ID_MASTER_AGAIN: u16 = 38;
+const ID_UPDATE: u16 = 39;
 
 /// What the user changed. Password fields left blank mean "leave it alone", so
 /// the hashes are `Option`.
@@ -214,6 +217,11 @@ struct State {
     master_again: HWND,
     status: HWND,
     voice_command: String,
+    /// The update button and the line beside it. Only settings mode has these:
+    /// the overlay must not offer a path that writes a new executable.
+    update_button: HWND,
+    version_line: HWND,
+    update_state: release::State,
     done: Option<Option<Changes>>,
 }
 
@@ -376,8 +384,22 @@ pub fn edit(config: &Config) -> Option<Changes> {
 
     // Version here and nowhere else. On the lock overlay it would tell whoever
     // is standing at the machine which build to look up.
-    let about = format!("Lock Screen {} ({})", lockscreen_core::VERSION, env!("LOCKSCREEN_COMMIT"));
-    add(0, "STATIC", &about, ui::SS_LABEL, (pad, y, content_w, label_h));
+    let version_line = add(
+        0,
+        "STATIC",
+        &release::version_line(release::Version::running(), release::State::Unknown),
+        ui::SS_LABEL,
+        (pad, y, content_w - s(150) - gap, label_h + s(6)),
+    );
+    let update_button = add(
+        ID_UPDATE,
+        "BUTTON",
+        release::State::Unknown.action(),
+        WS_TABSTOP,
+        (pad + content_w - s(150), y - s(4), s(150), button_h),
+    );
+    y += button_h + gap;
+    add(0, "STATIC", &format!("Build {}", env!("LOCKSCREEN_COMMIT")), ui::SS_LABEL, (pad, y, content_w, label_h));
     y += label_h + gap * 2;
 
     add(
@@ -412,6 +434,9 @@ pub fn edit(config: &Config) -> Option<Changes> {
             master_again,
             status,
             voice_command: config.voice.unlock_command.clone(),
+            update_button,
+            version_line,
+            update_state: release::State::Unknown,
             done: None,
         })
     });
@@ -518,6 +543,77 @@ fn attempt_save() {
     }
 }
 
+/// Reflect the current update state in the line and the button.
+fn show_update_state(state: release::State) {
+    STATE.with(|st| {
+        let mut held = st.borrow_mut();
+        let Some(s) = held.as_mut() else { return };
+        s.update_state = state;
+        ui::set_text(s.version_line, &release::version_line(release::Version::running(), state));
+        ui::set_text(s.update_button, state.action());
+        // SAFETY: a live child window.
+        unsafe {
+            let _ = EnableWindow(s.update_button, state.enabled());
+        }
+    });
+}
+
+/// The update button: looks the first time, installs the second.
+///
+/// Both halves block the UI thread, which is acceptable here and nowhere else:
+/// settings is a modal window somebody is sitting in front of, not the prompt
+/// standing between them and their desktop. The button is disabled first so the
+/// window reads as busy rather than frozen.
+fn update_pressed() {
+    let state = STATE.with(|st| st.borrow().as_ref().map(|s| s.update_state)).unwrap_or_default();
+
+    if !state.offers_update() {
+        show_update_state(release::State::Checking);
+        let found = update::check();
+        show_update_state(found);
+        set_status(match found {
+            release::State::UpToDate => "This is the newest release.",
+            release::State::Failed => "The forge could not be reached. There is a note in the log.",
+            _ => "",
+        });
+        return;
+    }
+
+    // Installing, and only ever because somebody pressed this. No silent
+    // auto-update: a compromised release channel should not own every install
+    // with nobody in the loop.
+    set_status("Downloading...");
+    let found = match update::fetch_update() {
+        Ok(found) => found,
+        Err(e) => {
+            set_status(&format!("The update could not be fetched: {e}"));
+            return;
+        }
+    };
+
+    if !found.installable() {
+        // Published without checksums, so it is offered as a page rather than
+        // installed. The release workflow publishes both or neither, so this
+        // means something went wrong at release time.
+        set_status("That release has no checksums, so it will not be installed here. Opening its page instead.");
+        update::open_page(&found);
+        return;
+    }
+
+    match update::download(&found).and_then(|file| update::install(&file)) {
+        Ok(()) => {
+            // Deliberately does not restart. Relaunching could put the overlay
+            // back up, and restarting a lock screen mid-session is a bypass
+            // rather than a convenience.
+            set_status(&format!(
+                "Version {} is installed. Close this window, then start Lock Screen again to use it.",
+                found.version
+            ));
+        }
+        Err(e) => set_status(&format!("The update was not installed: {e}")),
+    }
+}
+
 /// Probe the recogniser and report. Takes about a second, which is why the
 /// button is disabled while it runs.
 fn test_microphone() {
@@ -558,6 +654,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     }
                 }),
                 x if x == ID_TEST_MIC as i32 => test_microphone(),
+                x if x == ID_UPDATE as i32 => update_pressed(),
                 _ => {}
             }
             LRESULT(0)
