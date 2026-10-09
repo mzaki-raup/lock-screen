@@ -226,7 +226,7 @@ checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
 name = "lockscreen"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "embed-resource",
  "lockscreen-core",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "lockscreen-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "argon2",
  "rust-ini",
