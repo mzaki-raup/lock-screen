@@ -328,9 +328,14 @@ pub fn ask(owner: HWND, config: &Config, purpose: Purpose) -> Answer {
     // ---- message loop ----
     let mut msg = MSG::default();
     loop {
-        // Poll the worker. A channel rather than a cross-thread PostMessage so
-        // the thread boundary stays one-directional: the worker never touches
-        // our windows.
+        // Poll the workers. The answers come over channels rather than in a
+        // window message, because a voice answer carries what was heard and a
+        // String has no business in a WPARAM.
+        //
+        // Polling here is only correct because the workers also post
+        // `WM_APP_WORKER_DONE` to wake `GetMessageW` below -- a channel send
+        // does not. Without that post the answer waits for an unrelated
+        // message, which is exactly the defect fixed in 0.2.1.
         if let Some(outcome) = STATE.with(|st| {
             let mut state = st.borrow_mut();
             let state = state.as_mut()?;
@@ -418,7 +423,7 @@ fn on_hello(hwnd: HWND, outcome: hello::Outcome) {
 }
 
 /// Begin listening, unless an attempt is already running.
-fn start_voice() {
+fn start_voice(hwnd: HWND) {
     let Some((command, required, patience, button)) = STATE.with(|st| {
         let mut state = st.borrow_mut();
         let state = state.as_mut()?;
@@ -439,7 +444,7 @@ fn start_voice() {
         }
     }
 
-    let rx = voice::listen_on_worker(&command, required, patience);
+    let rx = voice::listen_on_worker(hwnd.0 as isize, &command, required, patience);
     STATE.with(|st| {
         if let Some(state) = st.borrow_mut().as_mut() {
             state.voice_rx = Some(rx);
@@ -618,7 +623,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         WM_COMMAND => {
             match ui::loword(wparam.0) as i32 {
                 x if x == IDOK.0 => attempt_password(),
-                x if x == ID_VOICE as i32 => start_voice(),
+                x if x == ID_VOICE as i32 => start_voice(hwnd),
                 x if x == IDCANCEL.0 => finish(Answer::Cancelled),
                 x if x == ID_RETRY_HELLO as i32 => start_hello(hwnd),
                 x if x == ID_USE_MASTER as i32 => {

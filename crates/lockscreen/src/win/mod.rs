@@ -34,6 +34,43 @@ pub fn instance() -> HINSTANCE {
     unsafe { GetModuleHandleW(None).map(|h| HINSTANCE(h.0)).unwrap_or_default() }
 }
 
+/// Posted to a prompt's window by a worker thread that has just put an answer
+/// on its channel.
+///
+/// Nothing reads the message. Its only job is to make `GetMessageW` return, so
+/// the loop goes round and polls the channel.
+pub const WM_APP_WORKER_DONE: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 9;
+
+/// Wake a window's message loop from a worker thread.
+///
+/// This is the fix for a defect that shipped in 0.1.0: Windows Hello would
+/// verify, and the prompt would sit there with the password box still showing
+/// until something unrelated happened -- a mouse move, a repaint -- because a
+/// send on an `mpsc` channel does not wake `GetMessageW`. The worker put the
+/// answer in the channel and the UI thread was parked waiting for a *window
+/// message*, which is a different thing entirely. The delay looked like
+/// slowness in Hello; it was the loop never being told.
+///
+/// `PostMessageW` is the documented way to do this and is explicitly safe to
+/// call from any thread. The worker still touches no window *state*: it posts
+/// one message carrying nothing and returns.
+///
+/// Takes the handle as an `isize` because `HWND` is not `Send`. That is sound:
+/// a window handle is a kernel-side identifier, not a pointer into this
+/// process's address space, and a handle that has since died makes
+/// `PostMessageW` fail rather than do something unpredictable.
+pub fn wake_message_loop(raw_hwnd: isize) {
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+    // SAFETY: see the note above on the handle and on cross-thread posting. A
+    // failure here means the window is gone, which means the prompt closed
+    // while the worker was still running -- nothing to do about it and nothing
+    // to report.
+    unsafe {
+        let _ = PostMessageW(Some(HWND(raw_hwnd as *mut _)), WM_APP_WORKER_DONE, WPARAM(0), LPARAM(0));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// A support report: everything the overlay's behaviour depends on that is

@@ -45,6 +45,16 @@ pub enum Confidence {
 }
 
 impl Confidence {
+    /// How to say this in a sentence shown to somebody at a locked screen.
+    pub fn name(self) -> &'static str {
+        match self {
+            Confidence::Rejected => "no",
+            Confidence::Low => "low",
+            Confidence::Medium => "medium",
+            Confidence::High => "high",
+        }
+    }
+
     fn from_winrt(value: SpeechRecognitionConfidence) -> Self {
         match value {
             SpeechRecognitionConfidence::High => Confidence::High,
@@ -81,9 +91,19 @@ pub fn required_level(threshold: f64) -> Confidence {
 pub enum Outcome {
     /// The expected command, clearly enough. Unlock.
     Accepted,
-    /// Something was heard, but not the command, or not clearly enough.
+    /// Something was heard, and it was not the command.
     /// Carries what was heard so the prompt can say so -- never logged.
     Rejected { heard: String, confidence: Confidence },
+    /// The command *was* heard, but not clearly enough to pass the configured
+    /// threshold.
+    ///
+    /// Separate from [`Outcome::Rejected`] because telling somebody their
+    /// command "is not the unlock command" when it demonstrably is sends them
+    /// looking for the wrong problem. This is the common outcome for a coined
+    /// word -- a name, an invented string -- which the recogniser will match
+    /// but rarely with high confidence, and `ConfidenceThreshold` defaults to
+    /// `1.00`, meaning high only.
+    Unsure { confidence: Confidence, required: Confidence },
     /// Nothing was said before the timeout.
     Silence,
     /// The recogniser could not be used: no microphone, permission refused, or
@@ -102,6 +122,11 @@ impl Outcome {
             Outcome::Rejected { heard, .. } => {
                 format!("Heard \u{201c}{heard}\u{201d}, which is not the unlock command.")
             }
+            Outcome::Unsure { confidence, required } => format!(
+                "Heard the command, but with {} confidence when {} is required.                  Try again more clearly, or lower ConfidenceThreshold in config.ini.",
+                confidence.name(),
+                required.name()
+            ),
             Outcome::Silence => "Nothing heard. Try again, or use your password.".to_owned(),
             Outcome::Unavailable => "Voice unlock is not available on this machine.".to_owned(),
         }
@@ -194,10 +219,16 @@ fn listen_blocking(command: &str, required: Confidence, patience: Duration) -> O
 
     // Both tests, every time: the right phrase *and* clearly enough. The .NET
     // code checks both too; what it got wrong was where the bar sat.
-    if heard == command.to_lowercase() && confidence >= required {
-        Outcome::Accepted
-    } else {
-        Outcome::Rejected { heard, confidence }
+    //
+    // Which of the two failed is reported separately, because they need
+    // different things done about them: a misheard word means say it again or
+    // pick a different one, while the right word held back by the threshold
+    // means the threshold is the problem.
+    let right_phrase = heard == command.to_lowercase();
+    match (right_phrase, confidence >= required) {
+        (true, true) => Outcome::Accepted,
+        (true, false) => Outcome::Unsure { confidence, required },
+        _ => Outcome::Rejected { heard, confidence },
     }
 }
 
@@ -205,13 +236,23 @@ fn listen_blocking(command: &str, required: Confidence, patience: Duration) -> O
 ///
 /// `RecognizeAsync` blocks and the prompt owns a message loop, so this cannot
 /// run on the UI thread -- the same split the Hello request uses.
-pub fn listen_on_worker(command: &str, required: Confidence, patience: Duration) -> mpsc::Receiver<Outcome> {
+/// `raw_hwnd` is the prompt's window, as an `isize` because `HWND` is not
+/// `Send`. It is only used to wake the message loop once the answer is on the
+/// channel -- without that the answer waits for an unrelated message, which is
+/// the defect `win::wake_message_loop` documents.
+pub fn listen_on_worker(
+    raw_hwnd: isize,
+    command: &str,
+    required: Confidence,
+    patience: Duration,
+) -> mpsc::Receiver<Outcome> {
     let (tx, rx) = mpsc::channel();
     let command = command.to_owned();
     std::thread::spawn(move || {
         // A send into a dropped channel is fine: it just means the prompt
         // closed while the recogniser was still listening.
         let _ = tx.send(listen_blocking(&command, required, patience));
+        super::wake_message_loop(raw_hwnd);
     });
     rx
 }
@@ -219,6 +260,40 @@ pub fn listen_on_worker(command: &str, required: Confidence, patience: Duration)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_right_word_held_back_by_the_threshold_is_not_reported_as_the_wrong_word() {
+        // The defect this fixes, in one assertion. Somebody sets the command to
+        // a coined word like "zacx", the recogniser matches it at medium
+        // confidence, the default threshold admits high only -- and the old
+        // message said the word "is not the unlock command", which sent them
+        // looking for a problem that was not there.
+        let unsure = Outcome::Unsure { confidence: Confidence::Medium, required: Confidence::High };
+        let message = unsure.message();
+        assert!(message.contains("Heard the command"), "{message}");
+        assert!(!message.contains("not the unlock command"), "that is the misleading wording: {message}");
+        // And it has to say what to do, since the threshold is not exposed in
+        // the settings window.
+        assert!(message.contains("ConfidenceThreshold"), "{message}");
+        assert!(message.contains("medium") && message.contains("high"), "both levels should be named: {message}");
+    }
+
+    #[test]
+    fn a_genuinely_wrong_word_still_says_so_and_quotes_it() {
+        let rejected = Outcome::Rejected { heard: "unlucky".to_owned(), confidence: Confidence::High };
+        let message = rejected.message();
+        assert!(message.contains("unlucky"), "{message}");
+        assert!(message.contains("not the unlock command"), "{message}");
+    }
+
+    #[test]
+    fn every_confidence_level_has_a_name_fit_for_a_sentence() {
+        for level in [Confidence::Rejected, Confidence::Low, Confidence::Medium, Confidence::High] {
+            let name = level.name();
+            assert!(!name.is_empty(), "{level:?}");
+            assert_eq!(name, name.to_lowercase(), "it appears mid-sentence: {name}");
+        }
+    }
 
     #[test]
     fn confidence_is_ordered_best_last_unlike_winrt() {

@@ -122,6 +122,11 @@ pub fn request_on_worker(hwnd: HWND, message: &str) -> mpsc::Receiver<Outcome> {
         let outcome = request_blocking(HWND(raw as *mut _), &message);
         // A send failure just means the dialog closed first; nothing to do.
         let _ = tx.send(outcome);
+        // Then wake the loop, or the answer sits in the channel until some
+        // unrelated message happens to arrive. See `win::wake_message_loop`:
+        // this is the fix for the "Hello verified, screen stayed locked for a
+        // few seconds" defect.
+        super::wake_message_loop(raw);
     });
     rx
 }

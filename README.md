@@ -26,7 +26,7 @@ spoken command as a convenience and a master password as a recovery path.
 | --: | --- | --- |
 | 1 | **Windows Hello** — face, fingerprint, or PIN | Attempted automatically when the prompt appears. Windows chooses the modality and handles its own retry limits. Skipped when Hello is not set up, with no wait. |
 | 2 | **App password** | Shown when Hello is unavailable or you dismiss it. Minimum 4 characters. Stored as an Argon2id verifier, never recoverable. Attempts are slowed after three wrong ones. |
-| 3 | **Voice command** | Off by default. Say your chosen word. A convenience, not a factor — see [Limitations](#limitations). |
+| 3 | **Voice command** | Off by default. Say your chosen word. A convenience, not a factor — see [Limitations](#limitations). If it reports hearing the command but not clearly enough, see `ConfidenceThreshold` below. |
 | 4 | **Master password** | Never offered automatically. The button appears only once you are at the password box, and only if a master password is set. Minimum 8 characters. Slowed after a single wrong attempt, because a recovery credential should not be a fast oracle. |
 
 ## First run
@@ -125,11 +125,32 @@ ListeningTimeout = 10
 | `BlurBackground` | Blurs the desktop behind the overlay, on **Windows 11 22H2 and later**. The overlay is built one of two ways depending on this — a layered window has no surface for the compositor to blur — and `Transparency` applies either way: as the window's alpha when blur is off, and as the tint painted over the backdrop when it is on. Where the backdrop API is unavailable it degrades to plain translucency and the setting reports itself as unavailable. |
 | `PasswordHash`, `MasterHash` | Argon2id verifiers with independent random salts, so rotating one does not invalidate the other. Not reversible, not comparable by eye, and useless to anyone who copies the file. |
 | `UnlockCommand` | The word to listen for. Lower-cased on read. |
-| `ConfidenceThreshold` | `0.0`–`1.0`, mapping onto WinRT's Low (0.4) / Medium (0.7) / High (1.0). Defaults to `1.00`. |
+| `ConfidenceThreshold` | `0.0`–`1.0`, mapping onto WinRT's Low (0.4) / Medium (0.7) / High (1.0). Defaults to `1.00`, which admits **high confidence only**. The settings window does not expose this; edit the file. |
 | `ListeningTimeout` | Seconds to listen before giving up |
 
 Out-of-range values are clamped rather than rejected, so a hand-edited file still opens the lock
 screen.
+
+### If voice unlock says it heard the command but not clearly enough
+
+That is `ConfidenceThreshold` doing its job, and the default is strict on purpose. **A coined word —
+a name, an invented string — is matched by the recogniser but rarely with *high* confidence**, which
+is all the default `1.00` accepts. Ordinary dictionary words reach it far more often.
+
+Two ways out, and they are not equivalent:
+
+```ini
+[VoiceRecognition]
+ConfidenceThreshold = 0.70
+```
+
+That accepts a medium-confidence match, which is what the .NET version did by default and what §7 of
+the study calls a defect: a medium-confidence *guess* at the word unlocks the screen. Lower it only
+if you accept that. The alternative is to choose a command the recogniser is confident about — a
+real word, or two words together — and leave the threshold where it is.
+
+Either way, remember what voice unlock is: speaker-independent, so it recognises the word and not
+you.
 
 ### Coming from the .NET version
 
