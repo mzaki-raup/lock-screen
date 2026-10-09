@@ -2,7 +2,7 @@
 
 **Subject:** LockScreenSolution v1.1.1.0 (.NET 8 WPF, 1,667 lines C#, 2 apps)
 **Probed on:** Windows 11 Pro 26200 · rustc 1.99.0 · `windows` 0.62.2
-**Date:** 9 October 2026 · rev. 3
+**Date:** 9 October 2026 · rev. 4
 **Rendered version:** <https://claude.ai/code/artifact/dad05b84-8822-421a-89b2-eccbd5e77f9e>
 
 > **Revision 2** recorded four decisions taken after the first draft: the master password is set at
@@ -19,6 +19,12 @@
 > projects, which pin neither an SDK nor a Rust toolchain. D6's path fix changed shape as a result —
 > the target is the executable's own directory, not `%APPDATA%`, and emphatically not the working
 > directory.
+>
+> **Revision 4** closes the last open question: the UI is **raw Win32, with no GUI toolkit**
+> ([§5](#5-what-replaces-wpf-decided)). Measured rather than argued, and the measurements contradicted
+> two claims in earlier revisions — both toolkits are ~10 MB rather than the few MB estimated, and
+> Slint's royalty-free desktop licence costs nothing rather than needing a budget. The unlock dialog
+> has been prototyped against the decision and is in the repository.
 
 ---
 
@@ -212,30 +218,70 @@ all first-party Microsoft or RustCrypto, MIT/Apache-2.0, and ship no native bina
 
 ---
 
-## 5. The one open decision — what replaces WPF
+## 5. What replaces WPF — decided
 
-This is the only genuine choice left in the migration, and it is worth splitting rather than
-answering once. The overlay and the dialogs have almost nothing in common: the overlay is a
-translucent fill with no controls on it, while the dialogs are ordinary forms.
+**Decided: raw Win32 through `windows-rs`, with no GUI toolkit at all.** Both the overlay and the
+three dialog modes. The unlock dialog has been built against this decision and is in the repository.
 
-| Option | Suits | Cost | License | Added size |
-| --- | --- | --- | --- | --- |
-| **Raw Win32** via `windows-rs` | The overlays. A layered window with one alpha value — no framework earns its weight here, and you get exact control over `WS_EX_NOACTIVATE`, z-order and per-monitor placement. | Hand-written `WndProc`. Painful for forms with styled inputs. | MIT / Apache-2.0 | ~0 |
-| **`egui` / `eframe` 0.36.2** | The dialogs — unlock prompt, settings, first-run setup. Immediate-mode, trivially embeddable, text input and focus handled, supports transparent windows. | Non-native look; not a system-themed control set. | MIT / Apache-2.0 | ~1.5–3 MB |
-| **`slint` 1.18.1** | Closest to the current mental model — a declarative markup file per window, much like your XAML, with real native-feeling widgets. | A build step and a second language. **Licensing needs a decision**: GPLv3, royalty-free, or paid — and this ships as proprietary software under a company copyright. | GPL / RF / paid | ~3–6 MB |
-| **Tauri** | Nothing here. | Puts a WebView2 dependency inside a security tool and reintroduces exactly the runtime-dependency problem the port is meant to remove. | MIT / Apache-2.0 | + WebView2 |
+Earlier revisions of this study recommended `egui` for the dialogs on the strength of estimates. The
+estimates were wrong, so the numbers below come from building a minimal password dialog in each
+toolkit with this project's own release profile (`opt-level = 3`, `lto`, `codegen-units = 1`,
+`panic = "abort"`, `strip`) and measuring.
 
-### Recommendation
+| | **raw Win32** | **egui 0.36.2** | **slint 1.18.1** |
+| --- | --- | --- | --- |
+| Binary | **460 KB** (actual) | **9.80 MB** | **10.39 MB** default · **9.85 MB** software-only |
+| Crates in graph | **70** | 418 | 568 |
+| Clean build | ~5 s | 148 s | 255 s |
+| **GPU context required** | **no** | **yes** | no, with `renderer-software` |
+| GPU crates compiled | none | `glow` `wgpu` `wgpu-hal` `ash` `naga` | none in the software config |
+| Licence | — | MIT / Apache-2.0 | GPL-3.0 **or** Royalty-free-2.0 **or** paid |
+| Password field | OS edit control: IME, accessibility, clipboard behaviour included | reimplemented by the toolkit | reimplemented by the toolkit |
+| `HWND` for Hello interop | owned directly | `Frame::window_handle()` | `raw-window-handle-06` feature |
+| Existing code to build on | **16,131 lines** in `flex-taskbar` | none | none |
 
-**Raw Win32 for the overlay windows, `egui`/`eframe` for the three dialog modes.** The overlay is
-where correctness matters and where a framework's own window management would fight you; the dialogs
-are where developer time matters and `egui` is the shortest path. Choosing `egui` over Slint is
-primarily a licensing call — MIT/Apache has no commercial question to resolve, and this product
-carries a company copyright. If a system-native look is a hard requirement, revisit Slint and budget
-for the royalty-free or commercial license.
+### Why, in order of weight
 
-The single-binary decision in §8 strengthens this: with one executable, the GUI crate is linked
-once rather than twice, so its size cost is paid a single time.
+1. **A GPU dependency is a lockout risk.** `eframe` has no software renderer — it compiles `glow`,
+   `wgpu`, `ash` and `naga`, and needs a live OpenGL 3.x / Vulkan / D3D12 context. For most
+   applications that is a performance footnote. For this one it is a safety argument: if the overlay
+   is up and the prompt cannot create a context — an RDP session, a Hyper-V basic display adapter, a
+   GPU driver mid-update — the user is shut out of their own machine. Slint's `renderer-software`
+   answers this (verified: zero GPU crates compiled). Raw Win32 never raises the question, because
+   GDI and USER32 have no such requirement.
+2. **Size, in a portable app.** 460 KB against ~10 MB, for a password box, two labels and four
+   buttons. The app is meant to be copied to a folder and carried.
+3. **The password field is the single most important control in the product.** The OS edit control
+   brings IME, screen-reader support and clipboard policy with it. A toolkit reimplements all three,
+   and a lock screen that a blind user cannot operate is a lock-out by another route.
+4. **The house has already done this.** `flex-taskbar` ships no GUI crate and builds a bar, flyouts,
+   a search window and several settings windows in 16,131 lines of Win32, with theming (`theme.rs`)
+   and accessibility (`access.rs`). So this is not "write a `WndProc` from scratch": `ui.rs` is
+   ported into this repository, and `prompt.rs` is the template the unlock dialog follows.
+
+### Two corrections to earlier revisions
+
+- **Size.** Revision 1 estimated `egui` at +1.5–3 MB and Slint at +3–6 MB. Both are **~+9.5 MB**, and
+  the gap claimed between them does not exist — the cost is each toolkit's own runtime, not its
+  renderers, which is why Slint's GPU-free configuration is no smaller.
+- **Licensing.** Revision 1 implied Slint might need a paid licence. It does not: the **Royalty-free
+  Desktop 2.0** licence covers proprietary desktop applications at no cost. The condition is
+  attribution — an `AboutSlint` widget in an About dialog reachable from a top-level menu, or a "Made
+  with Slint" badge on the page the binaries are downloaded from. GPL-3.0 is the option that is
+  incompatible with shipping this proprietary.
+
+With licensing neutral, Slint is the better of the two toolkits, which inverts revision 1's ranking.
+Neither is needed.
+
+### If this is ever revisited
+
+The dialogs are the only toolkit-dependent code; `win/ui.rs` and `win/hello.rs` touch nothing
+toolkit-specific and would carry over unchanged. Swapping the unlock prompt alone is roughly a day's
+work. That stays true until phase 05 adds the settings window, after which the cost of changing
+course roughly triples.
+
+**Tauri was considered and rejected outright:** it puts a WebView2 dependency inside a security tool
+and reintroduces exactly the runtime-dependency problem the port exists to remove.
 
 ---
 
@@ -840,15 +886,15 @@ high-DPI coverage) and one that undermines the product's purpose (D7, unauthenti
   Windows account password; reasoning and evidence retained in §7.
 - **Architecture** — one binary, three modes (`overlay` / `--settings` / `--setup`).
 - **Scope** — in-app updates and version reporting are in, as the last and most deferrable phase.
+- **UI** — raw Win32, no GUI toolkit (§5), measured rather than argued. The unlock dialog is built,
+  and the overlay's z-order and focus behaviour with it.
 
 ### Still open
 
-1. **GUI stack** — egui (recommended, MIT/Apache) or Slint (nicer, needs a license decision for
-   proprietary shipping). Decide before phase 01 ends.
-2. **Authenticode certificate** — needed by the phase 06 release workflow, and the only thing that
+1. **Authenticode certificate** — needed by the phase 06 release workflow, and the only thing that
    makes the phase 07 updater trustworthy against a forge compromise (§9). Who holds it and where it
    lives. If it cannot be obtained, ship the updater anyway but say so in the release notes.
-3. **Whether a Credential Provider is the actual goal.** If it is, that reframes this port as a
+2. **Whether a Credential Provider is the actual goal.** If it is, that reframes this port as a
    stepping stone and changes how much polish phase 06 deserves.
 
 ### Do these regardless of the migration decision
