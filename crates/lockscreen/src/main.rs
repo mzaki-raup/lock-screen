@@ -22,6 +22,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod mode;
+#[cfg(windows)]
+mod win;
 
 use std::process::ExitCode;
 

@@ -15,9 +15,11 @@ path = "src/main.rs"
 
 [dependencies]
 lockscreen-core = { path = "../lockscreen-core" }
+zeroize.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+windows-future.workspace = true
 
 [build-dependencies]
 embed-resource = "3"
