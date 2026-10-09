@@ -30,6 +30,7 @@ version = "0.62"
 features = [
   "Security_Credentials_UI",          # Windows Hello: biometric, PIN
   "Win32_Foundation",
+  "Win32_Graphics_Dwm",               # backdrop blur (D1)
   "Win32_Graphics_Gdi",               # system colours, fonts, monitor info
   "Win32_Security_Cryptography",      # DPAPI, to read .NET configs
   "Win32_System_Console",             # AttachConsole for --version / --help
@@ -37,6 +38,7 @@ features = [
   "Win32_System_LibraryLoader",       # GetModuleFileNameW: the portable path
   "Win32_System_Registry",            # DisableTaskMgr policy
   "Win32_System_WinRT",               # IUserConsentVerifierInterop
+  "Win32_UI_Controls",                # MARGINS, for the backdrop
   "Win32_UI_HiDpi",                   # per-monitor DPI
   "Win32_UI_Input_KeyboardAndMouse",  # SetFocus, EnableWindow
   "Win32_UI_WindowsAndMessaging",

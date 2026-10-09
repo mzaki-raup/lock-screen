@@ -14,7 +14,10 @@
 use windows::Win32::Foundation::HINSTANCE;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
+pub mod backdrop;
 pub mod hello;
+pub mod monitors;
+pub mod overlay;
 pub mod ui;
 pub mod unlock;
 
