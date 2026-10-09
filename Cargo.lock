@@ -225,6 +225,7 @@ dependencies = [
  "embed-resource",
  "lockscreen-core",
  "windows",
+ "windows-collections",
  "windows-future",
  "zeroize",
 ]

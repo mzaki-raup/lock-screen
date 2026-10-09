@@ -68,6 +68,17 @@ Usage: LockScreen.exe [OPTION]
 
 Settings are kept in config.ini beside this executable.";
 
+/// Shown when `--setup` is asked of a copy that already has credentials.
+///
+/// Setup must never rewrite an existing credential: changing a password without
+/// asking for the current one is defect D7, and a mode flag is not an
+/// authentication check -- anyone can pass one.
+const ALREADY_SET_UP: &str = "\
+This copy is already set up.
+
+To change the passwords, run LockScreen.exe --settings, which asks you to \
+authenticate first.";
+
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Mode, String> {
     let mut mode = Mode::Overlay;
     for arg in args {
@@ -109,15 +120,19 @@ fn run(mode: Mode) -> Result<(), String> {
     let config = config::load(&config_path).map_err(|e| format!("{} could not be read: {e}", config_path.display()))?;
 
     match mode {
+        // `--setup` must never rewrite a credential that already exists.
+        // Changing a password without asking for the current one is defect D7,
+        // and a mode flag is not an authentication check -- anyone can pass it.
+        // A configured copy is sent to settings mode, which authenticates.
+        Mode::Setup if !config.needs_setup() => Err(ALREADY_SET_UP.to_owned()),
+
         // First run, or a config carried over from the .NET app, which has no
         // Argon2 record in it. The overlay must not start in this state: there
         // is nothing to unlock with, and inventing `1234` and showing it in a
         // dialog is exactly what this port removes.
         Mode::Setup => mode::setup::run(&config_path, config),
-        _ if config.needs_setup() => {
-            report("No password has been set up yet. Starting setup.");
-            mode::setup::run(&config_path, config)
-        }
+        _ if config.needs_setup() => mode::setup::run(&config_path, config),
+
         Mode::Overlay => mode::overlay::run(&config_path, config),
         Mode::Settings => mode::settings::run(&config_path, config),
         Mode::Version | Mode::Help => unreachable!("handled above"),
@@ -193,6 +208,25 @@ mod tests {
     fn an_unknown_option_is_refused_rather_than_silently_locking_the_screen() {
         assert_eq!(parse(&["--sttings"]), Err("--sttings".to_owned()));
         assert_eq!(parse(&["/elevate"]), Err("/elevate".to_owned()));
+    }
+
+    #[test]
+    fn the_already_set_up_message_points_at_the_authenticated_path() {
+        // The user-facing half of the D7 guard: refusing is only useful if it
+        // says where to go instead.
+        assert!(ALREADY_SET_UP.contains("--settings"));
+        assert!(ALREADY_SET_UP.contains("authenticate"));
+        // And it must not be mangled by a stray line continuation.
+        for line in ALREADY_SET_UP.lines() {
+            assert_eq!(line, line.trim_start(), "stray indentation in a user-facing message: {line:?}");
+        }
+    }
+
+    #[test]
+    fn no_user_facing_message_carries_stray_indentation() {
+        for line in USAGE.lines().filter(|l| !l.starts_with("    ")) {
+            assert_eq!(line, line.trim_start(), "{line:?}");
+        }
     }
 
     #[test]

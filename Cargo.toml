@@ -19,6 +19,7 @@ publish = false
 [workspace.dependencies]
 argon2 = { version = "0.6", features = ["password-hash"] }
 rust-ini = "0.21"
+windows-collections = "0.3"
 windows-future = "0.3"
 zeroize = { version = "1", features = ["derive"] }
 
@@ -28,6 +29,9 @@ zeroize = { version = "1", features = ["derive"] }
 [workspace.dependencies.windows]
 version = "0.62"
 features = [
+  "Foundation",                       # TimeSpan, AsyncStatus
+  "Globalization",                    # the speech recogniser's language
+  "Media_SpeechRecognition",          # voice unlock
   "Security_Credentials_UI",          # Windows Hello: biometric, PIN
   "Win32_Foundation",
   "Win32_Graphics_Dwm",               # backdrop blur (D1)

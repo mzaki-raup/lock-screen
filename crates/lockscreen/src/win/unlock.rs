@@ -41,14 +41,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::PCWSTR;
 use zeroize::Zeroizing;
 
-use super::{hello, hooks, ui};
+use super::{hello, hooks, ui, voice};
 
 const ID_PASSWORD: u16 = 10;
 const ID_RETRY_HELLO: u16 = 11;
 const ID_USE_MASTER: u16 = 12;
+const ID_VOICE: u16 = 13;
 
 /// Posted to the dialog when the Hello worker has an answer.
 const WM_APP_HELLO: u32 = WM_APP + 1;
+/// Posted when the voice worker has an answer.
+const WM_APP_VOICE: u32 = WM_APP + 2;
 
 /// How the prompt ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +68,10 @@ pub enum Answer {
 pub enum Via {
     Hello,
     Password,
+    /// Spoken command. Recorded separately from a password because it is not
+    /// equivalent to one: recognition is speaker-independent, so this says a
+    /// phrase was heard, not who said it.
+    Voice,
     Master,
 }
 
@@ -89,6 +96,15 @@ struct State {
     /// In flight, if any. Held here rather than in `ask`'s locals so that a
     /// retry started from the window procedure is visible to the loop.
     hello_rx: Option<Receiver<hello::Outcome>>,
+    /// The voice button, when voice unlock is switched on. `None` otherwise,
+    /// and then no row was laid out for it at all.
+    voice_button: Option<HWND>,
+    voice_rx: Option<Receiver<voice::Outcome>>,
+    /// What the recogniser listens for, and how sure it has to be. Copied from
+    /// the config so the worker does not borrow it.
+    voice_command: String,
+    voice_required: voice::Confidence,
+    voice_patience: std::time::Duration,
 }
 
 thread_local! {
@@ -188,7 +204,18 @@ pub fn ask(owner: HWND, config: &Config) -> Answer {
         WS_TABSTOP,
         (pad + wide_button + gap, y, wide_button, button_h),
     );
-    y += button_h + s(14);
+    y += button_h + gap;
+
+    // Only laid out when voice unlock is switched on, so a dialog that cannot
+    // use it is not left with a gap where the button would have been.
+    let voice_button = if config.voice.enabled {
+        let b = add(ID_VOICE, "BUTTON", "Unlock by voice", WS_TABSTOP, (pad, y, wide_button, button_h));
+        y += button_h + gap;
+        Some(b)
+    } else {
+        None
+    };
+    y += s(6);
 
     add(
         IDOK.0 as u16,
@@ -218,6 +245,11 @@ pub fn ask(owner: HWND, config: &Config) -> Answer {
             attempts: 0,
             answer: None,
             hello_rx: None,
+            voice_button,
+            voice_rx: None,
+            voice_command: config.voice.unlock_command.clone(),
+            voice_required: voice::required_level(config.voice.confidence_threshold),
+            voice_patience: voice::patience(config.voice.listening_timeout),
         })
     });
 
@@ -282,6 +314,18 @@ pub fn ask(owner: HWND, config: &Config) -> Answer {
             on_hello(hwnd, outcome);
         }
 
+        if let Some(outcome) = STATE.with(|st| {
+            let mut state = st.borrow_mut();
+            let state = state.as_mut()?;
+            let outcome = state.voice_rx.as_ref()?.try_recv().ok();
+            if outcome.is_some() {
+                state.voice_rx = None;
+            }
+            outcome
+        }) {
+            on_voice(hwnd, outcome);
+        }
+
         if STATE.with(|st| st.borrow().as_ref().is_none_or(|s| s.answer.is_some())) {
             break;
         }
@@ -339,6 +383,53 @@ fn on_hello(hwnd: HWND, outcome: hello::Outcome) {
             hwnd,
             WM_APP_HELLO,
             Some(WPARAM(outcome_code(outcome))),
+            Some(LPARAM(0)),
+        );
+    }
+}
+
+/// Begin listening, unless an attempt is already running.
+fn start_voice() {
+    let Some((command, required, patience, button)) = STATE.with(|st| {
+        let mut state = st.borrow_mut();
+        let state = state.as_mut()?;
+        if state.voice_rx.is_some() {
+            return None;
+        }
+        Some((state.voice_command.clone(), state.voice_required, state.voice_patience, state.voice_button))
+    }) else {
+        return;
+    };
+
+    set_status("Listening\u{2026}");
+    sound::play(Sound::Listening);
+    if let Some(button) = button {
+        // SAFETY: a live child window.
+        unsafe {
+            let _ = EnableWindow(button, false);
+        }
+    }
+
+    let rx = voice::listen_on_worker(&command, required, patience);
+    STATE.with(|st| {
+        if let Some(state) = st.borrow_mut().as_mut() {
+            state.voice_rx = Some(rx);
+        }
+    });
+}
+
+/// Route a voice answer through the window procedure, so the decision lives in
+/// one place.
+fn on_voice(hwnd: HWND, outcome: voice::Outcome) {
+    let accepted = outcome == voice::Outcome::Accepted;
+    // Only the verdict crosses the WPARAM; the message is set here, because
+    // what was heard is a String and has no business in a window message.
+    set_status(&outcome.message());
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            hwnd,
+            WM_APP_VOICE,
+            Some(WPARAM(usize::from(accepted))),
             Some(LPARAM(0)),
         );
     }
@@ -471,9 +562,34 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             show_master_button();
             LRESULT(0)
         }
+        WM_APP_VOICE => {
+            if wparam.0 == 1 {
+                sound::play(Sound::Unlocked);
+                finish(Answer::Unlocked(Via::Voice));
+                return LRESULT(0);
+            }
+            // Failed attempts count against the same limit as a wrong password,
+            // so a spoken guess is not a cheaper one.
+            STATE.with(|st| {
+                if let Some(state) = st.borrow_mut().as_mut() {
+                    state.attempts += 1;
+                    if let Some(button) = state.voice_button {
+                        unsafe {
+                            let _ = EnableWindow(button, true);
+                        }
+                    }
+                    unsafe {
+                        let _ = SetFocus(Some(state.password_box));
+                    }
+                }
+            });
+            show_master_button();
+            LRESULT(0)
+        }
         WM_COMMAND => {
             match ui::loword(wparam.0) as i32 {
                 x if x == IDOK.0 => attempt_password(),
+                x if x == ID_VOICE as i32 => start_voice(),
                 x if x == IDCANCEL.0 => finish(Answer::Cancelled),
                 x if x == ID_RETRY_HELLO as i32 => start_hello(hwnd),
                 x if x == ID_USE_MASTER as i32 => {

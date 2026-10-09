@@ -19,6 +19,7 @@ zeroize.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+windows-collections.workspace = true
 windows-future.workspace = true
 
 [build-dependencies]
