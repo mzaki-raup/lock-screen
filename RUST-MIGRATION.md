@@ -2,15 +2,23 @@
 
 **Subject:** LockScreenSolution v1.1.1.0 (.NET 8 WPF, 1,667 lines C#, 2 apps)
 **Probed on:** Windows 11 Pro 26200 · rustc 1.99.0 · `windows` 0.62.2
-**Date:** 9 October 2026 · rev. 2
+**Date:** 9 October 2026 · rev. 3
 **Rendered version:** <https://claude.ai/code/artifact/dad05b84-8822-421a-89b2-eccbd5e77f9e>
 
-> **Revision 2** records four decisions taken after the first draft: the master password is set at
+> **Revision 2** recorded four decisions taken after the first draft: the master password is set at
 > first run and is **not** tied to the Windows account ([§7](#7-credentials-the-master-password-and-first-run));
 > the app ships as **one binary with three modes**, not two executables
 > ([§8](#8-architecture-one-binary-three-modes)); in-app updates and version reporting are in scope
 > ([§9](#9-in-app-updates-and-version-reporting)); and the unauthenticated settings window is now
 > tracked as defect **D7**.
+>
+> **Revision 3** adds three more, all in [§8](#8-architecture-one-binary-three-modes):
+> the app is **portable** — settings live beside the executable, with nothing in `%APPDATA%` and no
+> installer; the supported floor is **Windows 10 build 17763 (1809)** and later, unchanged from the
+> current csproj; and `global.json` is **deleted** rather than repaired, matching the sibling
+> projects, which pin neither an SDK nor a Rust toolchain. D6's path fix changed shape as a result —
+> the target is the executable's own directory, not `%APPDATA%`, and emphatically not the working
+> directory.
 
 ---
 
@@ -70,6 +78,7 @@ shapes.
 | Framework-dependent output | 30 MB | 7 DLLs beside the exe; requires .NET 8 Desktop Runtime on the target |
 | Self-contained single-file | 181 MB | `LockScreen.exe` = 180,727,089 bytes, and single-file still can't absorb 7 native DLLs: `wpfgfx_cor3`, `D3DCompiler_47_cor3`, `PresentationNative_cor3`, `PenImc_cor3`, `vcruntime140_cor3`, `uiohook.dll` |
 | DPI awareness declared | **none** | No `app.manifest`, no `HighDpiMode` — see defect D2 |
+| SDK pin | `global.json` | **Delete it.** It pins SDK `8.0.0` for no benefit — nothing is reproducible when the pinned SDK is installed nowhere, and a 10.x SDK builds a `net8.0` target fine. The sibling has neither a `global.json` nor a `rust-toolchain.toml`; the house convention is current stable. Cargo has no equivalent, so this disappears with the port. |
 | Git remote | `git.zacx.net` | Self-hosted **Forgejo**, not GitHub. A sibling project already ships an updater and release pipeline against it — see §9 |
 
 ---
@@ -175,7 +184,7 @@ rewrite rather than a substitution.
 | Full-screen translucent overlay | WPF `AllowsTransparency` + `SolidColorBrush(a,0,0,0)` | `WS_EX_LAYERED \| WS_EX_TOPMOST \| WS_EX_NOACTIVATE`<br>`SetLayeredWindowAttributes(…, alpha, LWA_ALPHA)` | ◐ Design |
 | Multi-monitor enumeration | WinForms `Screen.AllScreens` | `EnumDisplayMonitors` + `GetMonitorInfoW` · `Win32_Graphics_Gdi` | ✅ Present |
 | Per-monitor DPI | *not handled* — see D2 | Declared in `assets/app.manifest` (`PerMonitorV2`), as the sibling does, plus `GetDpiForMonitor` at runtime | 🆕 Fix |
-| Background blur | WPF `BlurEffect { Radius = 10 }` — a no-op, see D1 | `DwmEnableBlurBehindWindow` or `SetWindowCompositionAttribute(ACCENT_ENABLE_ACRYLICBLURBEHIND)`<br>`window-vibrancy 0.8.1` wraps both | 🆕 Fix |
+| Background blur | WPF `BlurEffect { Radius = 10 }` — a no-op, see D1 | `DWMWA_SYSTEMBACKDROP_TYPE` on Windows 11, `ACCENT_ENABLE_ACRYLICBLURBEHIND` on Windows 10 1809+<br>`window-vibrancy 0.8.1` owns the version branching | 🆕 Fix |
 
 ### Input control
 
@@ -292,12 +301,19 @@ thing to remember.
 ### D6 — Five duplicated helpers, already divergent
 
 See §1, plus a password policy at `SettingsApp/MainWindow.xaml.cs:134` that requires ≥3 characters
-and *rejects* any symbol — so `abc` is accepted and `correct-horse-battery` is not. `config.ini`
-also resolves against the working directory rather than `%APPDATA%`.
+and *rejects* any symbol — so `abc` is accepted and `correct-horse-battery` is not.
+
+`config.ini` is also a bare relative path (`IniHelper.cs:7`), so `File.Exists` and `ReadFile`
+resolve it against the process's **current working directory** — whatever directory the app happened
+to be launched from, not where the executable lives. A shortcut with a different *Start in* field, a
+scheduled task, or a launch from a terminal elsewhere each point the app at a different `config.ini`.
+Worse, finding none it *creates* one carrying the `1234` default password in that directory, so a
+stray launch quietly scatters working default credentials around the disk.
 
 *Fix:* §8's single binary makes divergence structurally impossible — one executable cannot disagree
 with itself about the config format or the Argon2 parameters, which is stronger than the shared-crate
-fix originally proposed here.
+fix originally proposed here. The path bug is fixed by resolving against the **executable's own
+directory** via `GetModuleFileNameW`, never `current_dir()` — see the portable layout below.
 
 ### D7 — The settings window requires no authentication
 
@@ -477,6 +493,88 @@ config path is resolved.
 - **Mode dispatch is not a security boundary.** `--settings` is a flag anyone can pass. That is
   fine, because the gate is authentication (D7), not argv. Do not let the two be confused.
 
+### Portable: settings live beside the executable
+
+**Decided:** the app is portable. Settings sit next to `LockScreen.exe`, there is no installer, and
+nothing is written to `%APPDATA%`, `%LOCALAPPDATA%` or `%ProgramData%`. This matches `flex-taskbar`,
+whose README states the same property — one exe, no installer, settings kept next to it.
+
+**"Beside the executable" must not be read as "the working directory".** Those are different
+directories, and conflating them is exactly defect D6. The current working directory is whatever the
+process was launched from and varies per shortcut, per scheduled task, per terminal; the
+executable's directory never changes while the program runs. Resolve it once at startup from
+`GetModuleFileNameW` and take the parent — never `std::env::current_dir()`, and never a bare
+relative path.
+
+```
+LockScreen.exe        the whole program
+config.ini            settings + Argon2id verifiers, beside the exe
+data/
+  update/             updater scratch space (§9)
+  lockscreen.log      diagnostics
+```
+
+`config.ini` is the only file holding user intent; everything under `data/` is derived and safe to
+delete. Keeping transient files in a subdirectory rather than loose beside the exe follows the
+sibling, which puts its own `data\crash.log` and `data\update\` there.
+
+Four consequences worth planning for rather than discovering:
+
+- **`%ProgramFiles%` stops being a valid location.** A standard user cannot write there, so a
+  portable app placed there cannot save settings. Probe writability at startup and say so plainly —
+  *"Settings can't be saved: this folder is read-only. Move the app somewhere you can write, such as
+  your user folder."* Failing silently on save is the one outcome to avoid.
+- **Portability only works because of §7.** DPAPI ties a blob to one user on one machine, so a
+  portable DPAPI config would break the moment the folder moved. An Argon2id PHC string is just a
+  hash and travels anywhere. The credential redesign and this decision support each other; under the
+  old scheme "portable" would have been a promise the app could not keep.
+- **Each copy of the exe has its own settings.** Two folders means two independent configurations.
+  Ordinary portable behaviour, but document it so nobody files it as a bug.
+- **The Task Manager policy is not portable.** `DisableTaskMgr` is an `HKCU` value written to
+  whatever machine the app runs on and removed on unlock. "Portable" describes where settings live,
+  not the fact that the overlay still touches the local registry while it is up.
+
+One security note: anyone who can write the app's folder can replace `config.ini`, and therefore the
+verifier. That is not new — §12 already says the app cannot protect its config from the user who owns
+it — but it argues for keeping the folder somewhere only you can write rather than a shared location
+like `C:\Tools\`.
+
+### Windows 10 and 11: the supported floor
+
+**Decided:** Windows 10 build 17763 (version 1809) or later — exactly what the current csproj
+already declares via `TargetPlatformMinVersion`. Nobody loses support in the port.
+
+Rust's own Tier-1 baseline for `x86_64-pc-windows-msvc` has been Windows 10 since Rust 1.78, so the
+toolchain and the target agree with no workarounds. Every API in §4 is comfortably older than 1809:
+
+| API | Available since |
+| --- | --- |
+| WinRT `SpeechRecognizer` | Windows 10 1507 |
+| `UserConsentVerifier` / `IUserConsentVerifierInterop` | Windows 10 1607 |
+| `PerMonitorV2` DPI awareness | Windows 10 1703 |
+| `ACCENT_ENABLE_ACRYLICBLURBEHIND` | Windows 10 1803 |
+| `GetDpiForMonitor` | Windows 8.1 |
+| DPAPI · `SetWindowsHookExW` · `MessageBeep` · `EnumDisplayMonitors` | Windows 2000–Vista era |
+
+The binding constraint is the blur fix for D1, and it is the reason to stay at 1809 rather than drop
+to the sibling's 1703: acrylic needs 1803, so a 1809 floor means **two** blur paths, not three.
+
+| Target | Mechanism |
+| --- | --- |
+| Windows 11 22H2+ | `DwmSetWindowAttribute` with `DWMWA_SYSTEMBACKDROP_TYPE` |
+| Windows 10 1809 → Windows 11 21H2 | `SetWindowCompositionAttribute` with `ACCENT_ENABLE_ACRYLICBLURBEHIND` |
+| *(below 1809 — not supported)* | *would need `ACCENT_ENABLE_BLURBEHIND`; avoided by the floor* |
+
+`SetWindowCompositionAttribute` is undocumented and its accent states vary by build, which is the
+argument for `window-vibrancy 0.8.1` — it owns the version branching so you do not. Note also that
+the sibling's manifest declares `activeCodePage UTF-8`, which only takes effect from Windows 10
+1903; older builds ignore it harmlessly, and since the port calls wide APIs throughout it changes
+nothing either way.
+
+One factual note for planning, not a recommendation: Windows 10 22H2 reached end of support on
+14 October 2025, so Windows 10 users are on LTSC or ESU unless they are unpatched. That affects
+whether *they* receive OS security updates, not whether this app runs.
+
 ### Workspace
 
 ```
@@ -485,7 +583,8 @@ lock-screen/
 ├── build.rs                    winresource: icons, VERSIONINFO, git hash (§9)
 ├── crates/
 │   ├── lockscreen-core/        all shared logic, linked once
-│   │   ├── config.rs           rust-ini; %LOCALAPPDATA% path resolution (fixes D6)
+│   │   ├── paths.rs            exe-dir resolution via GetModuleFileNameW (fixes D6)
+│   │   ├── config.rs           rust-ini over <exe dir>/config.ini
 │   │   ├── credential.rs       argon2id verifiers + zeroize; reads legacy DPAPI config
 │   │   ├── hello.rs            IUserConsentVerifierInterop (HWND-parented)
 │   │   ├── voice.rs            WinRT SpeechRecognizer + list constraint
@@ -582,12 +681,22 @@ sibling's choices do not carry over:
   it. Doing that here would relaunch the *overlay* — restarting a lock screen mid-session is a
   bypass, not a convenience. Install, then exit; the user starts the lock again themselves.
 
-### Install location decides the elevation story
+### The portable layout removes the elevation question
 
-| Location | Updater needs | Verdict |
-| --- | --- | --- |
-| `%ProgramFiles%` | UAC elevation on every update, or a privileged helper service / scheduled task | Avoid — a lot of machinery, and a privileged auto-updater is its own attack surface |
-| `%LOCALAPPDATA%\Procybro\LockScreen\` | nothing | **Recommended.** What Chrome and VS Code's user install do, and it fixes D6's config path in the same stroke |
+Because the app is portable (§8) there is no `%ProgramFiles%` install to elevate for and no
+privileged helper service to write — a privileged auto-updater would have been its own attack
+surface. The updater writes into the folder it already lives in:
+
+| Step | Location |
+| --- | --- |
+| Download | `data/update/` beside the exe |
+| Verify | in place, against `SHA256SUMS.txt` |
+| Install | rename `LockScreen.exe` to `LockScreen.old.exe`, move the new one in, roll back on failure |
+| Clean up | delete the leftover on next start |
+
+The one new failure mode is a read-only folder, which is the same check §8 already requires at
+startup. Detect it before downloading 2 MB rather than after: if the folder cannot be written, the
+update button should be disabled with the reason shown, not fail at the final step.
 
 ### Release pipeline — also already solved
 
@@ -662,7 +771,7 @@ unfamiliar territory.
 | **03** | **Credentials, setup mode, unlock prompt.** Argon2id verifiers; first-run `--setup` flow; egui unlock dialog; Hello via the interop interface with a real parent `HWND`; master-password rung; modal capture semantics. Fixes Finding B and D5. | 5–6 d |
 | **04** | **Voice unlock.** WinRT `SpeechRecognizer`, list grammar, timeout, and a corrected confidence gate. Already proven end-to-end by probe 2. | 2 d |
 | **05** | **Settings mode.** Same binary, third mode. Auth gate before the window opens and before any credential change — fixes D7. Real password policy, mic test, version display. | 4–5 d |
-| **06** | **Hardening and ship.** Single-instance guard (absent today — overlays can stack), structured logging instead of `catch {}`, per-user install layout, Authenticode signing, installer, shortcuts carrying `--settings`. | 3–4 d |
+| **06** | **Hardening and ship.** Single-instance guard (absent today — overlays can stack), structured logging instead of `catch {}`, portable-folder writability check, Authenticode signing, release workflow, a zip rather than an installer, shortcuts carrying `--settings`. | 3–4 d |
 | **07** | **In-app updater.** *Deferrable.* Adapt the sibling's `release.rs` + `win/update.rs`: WinHTTP, Forgejo releases API, `SHA256SUMS.txt` check, rename-aside install, downgrade refusal, settings-only entry point, no restart-into-lock. | 2–3 d |
 | **08** | **Parity validation.** Side-by-side on mixed-DPI multi-monitor, with and without Hello hardware, with and without a microphone, and against a `config.ini` from the .NET build. | 3–4 d |
 

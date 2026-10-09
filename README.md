@@ -12,6 +12,9 @@ the per-user policy that disables Task Manager. Both are undone on unlock.
 - Written in C# against .NET 8 and WPF, using WinRT for Windows Hello and speech recognition.
 - Two executables: `LockScreen.exe` (the overlay) and `Settings.exe` (the configurator).
 - Fully local. No telemetry, no network access of any kind.
+- No installer. Settings are kept in a `config.ini` beside the executable — though see
+  [Known issues](#known-issues), because the current version resolves that path against the working
+  directory rather than the executable's own folder.
 
 > **Status — please read.** This is a deterrent overlay, **not a security boundary.** It is an
 > ordinary user-mode process drawing an always-on-top window, so anyone who can run code as your
@@ -52,9 +55,12 @@ dotnet run --project LockScreenApp/LockScreenApp.csproj
 dotnet run --project SettingsApp/SettingsApp.csproj
 ```
 
-> **Note.** `global.json` pins the SDK to `8.0.0` with `rollForward: latestMinor`, so the build
-> fails outright on a machine that only has a 9.x or 10.x SDK installed. Either install an 8.x SDK
-> or change `rollForward` to `latestMajor`.
+> **Note.** `global.json` pins the SDK to `8.0.0` with `rollForward: latestMinor` — meaning *stay on
+> major version 8* — so the build fails outright on a machine that has only a 9.x or 10.x SDK. The
+> pin buys nothing: it cannot give reproducible builds when the SDK it names is installed nowhere,
+> and a 10.x SDK compiles a `net8.0` target perfectly well (the SDK version and the target framework
+> are independent). Delete the file, or set `rollForward` to `latestMajor` if you want to keep the
+> documented 8.0 floor.
 
 Build a self-contained copy that needs no runtime installed:
 
@@ -67,8 +73,14 @@ single file, so `wpfgfx_cor3.dll`, `D3DCompiler_47_cor3.dll` and five others shi
 
 ## Configuration
 
-Settings live in `config.ini`, created next to the executable on first run. `Settings.exe` is the
-intended way to edit it.
+Settings live in `config.ini`, created on first run. `Settings.exe` is the intended way to edit it.
+
+> **Where that file lands.** `config.ini` is a bare relative path, so it resolves against the
+> process's **current working directory** — not the folder the executable sits in. Launch the app
+> from a shortcut with a different *Start in* field, from a scheduled task, or from a terminal
+> elsewhere, and you get a different `config.ini`; if none is found there, a fresh one is created
+> with the default password. Keep the working directory set to the app's own folder until this is
+> fixed in the port.
 
 ```ini
 [LockScreen]
@@ -114,14 +126,24 @@ These are real and worth knowing before you rely on the app. Each is analysed in
   thought about that.
 - Key suppression for Alt+Tab and Ctrl+Shift+Esc is unreliable (D4), because modifier state is read
   from the UI framework rather than from the physical keyboard.
+- **`config.ini` follows the working directory, not the executable** (part of D6). Launching from a
+  different directory silently uses — or creates — a different config, including one carrying the
+  default password.
 - There is no single-instance guard, so launching the overlay twice stacks two of them.
 
 ## What's next
 
-A port to Rust is being evaluated — native Win32 instead of WPF, one executable instead of two, a
-first-run master password instead of the `1234` default, and in-app updates from this repository.
-Every Windows API the current app depends on has been verified callable from Rust, and the seven
-defects above get fixed as part of the rewrite.
+A port to Rust is underway — native Win32 instead of WPF, one executable instead of two, a first-run
+master password instead of the `1234` default, and in-app updates from this repository. Every
+Windows API the current app depends on has been verified callable from Rust, and the defects above
+get fixed as part of the rewrite.
+
+The port is **properly portable**: `config.ini` resolves against the executable's own folder via
+`GetModuleFileNameW`, so it no longer matters where the app is launched from. Nothing is written to
+`%APPDATA%` or `%LOCALAPPDATA%`, there is no installer, and a copy of the folder carries its settings
+with it — which works because the password becomes an Argon2id hash rather than a DPAPI blob tied to
+one user on one machine. The supported floor stays **Windows 10 build 17763 (1809) and later**,
+unchanged from today.
 
 **[RUST-MIGRATION.md](RUST-MIGRATION.md)** is the full feasibility study: parity matrix, measured
 evidence, phased plan and effort estimates. A rendered version is
