@@ -59,6 +59,11 @@ roughly 55% of the effort — and that is also where the existing high-DPI and o
 
 ## 1. What is actually being ported
 
+> **Where the subject lives now.** The port is finished and merged, and the C# has been removed from
+> the tree. Every `LockScreenApp/…` and `SettingsApp/…` path in this study — and in the code
+> comments — resolves against the **`dotnet-final`** tag, not against the working tree:
+> `git worktree add ../lock-screen-dotnet dotnet-final`.
+
 Two WinExe projects on `net8.0-windows10.0.19041.0`, sharing five helper files by copy-paste
 rather than by project reference. The copies have already diverged — `LockScreenApp`'s
 `EncryptionHelper` swallows `CryptographicException` and returns the ciphertext as plaintext;

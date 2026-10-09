@@ -127,10 +127,18 @@ Sign out and Switch user remain reachable if the overlay misbehaves.
 
 1. **Both monitors covered.** Lock. Check both screens edge to edge, including under the taskbar.
    *Failure:* any desktop visible at an edge, or one monitor left entirely uncovered.
-2. **Side by side with the .NET app, on the 150% monitor.** Build and run `LockScreenApp`, look at
-   `DISPLAY1`, then do the same with the port. *What this settles:* whether the .NET overlay is soft
-   and stretched (the §2.2 prediction) or actually short of the edges (the study's original claim).
-   Note which, and correct §2.2 or D2 accordingly.
+2. **Side by side with the .NET app, on the 150% monitor.** The C# is no longer in this tree, so
+   get it from the tag first:
+
+   ```bash
+   git worktree add ../lock-screen-dotnet dotnet-final
+   dotnet build ../lock-screen-dotnet/LockScreenApp/LockScreenApp.csproj
+   ```
+
+   Run it, look at `DISPLAY1`, then do the same with the port. *What this settles:* whether the .NET
+   overlay is soft and stretched (the §2.2 prediction) or actually short of the edges (the study's
+   original claim). Note which, and correct §2.2 or D2 accordingly. **This is the one item holding
+   anything open** — it is the last unsettled claim in the study.
 3. **The prompt lands on the right monitor and is the right size.** Move the pointer to each monitor
    in turn, lock, and look at where the prompt appears. *Failure:* a prompt on the wrong screen, or
    one two thirds or one and a half times the size it should be — that is the DPI mixture D2 is

@@ -4,15 +4,20 @@ Guidance for Claude Code working in this repository.
 
 ## What this repository is
 
-A Windows lock-screen overlay, **being ported from .NET 8 / WPF to Rust**. On
-this branch the Rust implementation is the one under development; the C# is kept
-for reference while the port finishes.
+A Windows lock-screen overlay in Rust, **ported from .NET 8 / WPF**. The port is
+finished and merged; the C# is gone from the tree.
 
-- **`crates/`** — the Rust port. This is where new work goes.
-- **`LockScreenApp/`, `SettingsApp/`** — the original .NET 8 WPF apps, legacy.
-  Also preserved on the `backup/dotnet-wpf` branch and the `dotnet-final` tag,
-  so they can be deleted from this branch whenever the port no longer needs them
-  for comparison.
+- **`crates/`** — the whole program. `lockscreen` is the binary, Win32 and all;
+  `lockscreen-core` is the part that needs no window, and therefore the part
+  that can be tested without one.
+- **The .NET original** is at the **`dotnet-final`** tag and on the
+  `backup/dotnet-wpf` branch. Comments throughout the code cite it by path and
+  line (`SettingsApp/MainWindow.xaml.cs:88`, and so on) — those paths resolve
+  against that tag, not against this tree. To read or build it:
+
+  ```bash
+  git worktree add ../lock-screen-dotnet dotnet-final
+  ```
 - **`RUST-MIGRATION.md`** — the feasibility study and the record of every design
   decision taken so far. **Read it before changing architecture**; it carries the
   reasoning, the measurements, and the defect numbering (D1–D7) used throughout
@@ -46,16 +51,18 @@ cargo test -p lockscreen --bin LockScreen layout -- --ignored --nocapture
 cargo test -p lockscreen --bin LockScreen dpi_virtualisation -- --ignored --nocapture
 ```
 
-The legacy .NET apps, if you need to compare behaviour:
+To compare behaviour against the .NET original, build it from the worktree
+above — not from this tree, which no longer contains it:
 
 ```bash
-dotnet build LockScreenApp/LockScreenApp.csproj
-dotnet build SettingsApp/SettingsApp.csproj
+dotnet build ../lock-screen-dotnet/LockScreenApp/LockScreenApp.csproj
 ```
 
 There is no `global.json` and no `rust-toolchain.toml`, deliberately — the house
-convention across sibling projects is current stable. The `.sln` was removed for
-the same reason: it was a Visual Studio artifact with no role in the port.
+convention across sibling projects is current stable. The `.sln` went for the
+same reason, and `.gitignore` is a Rust one now rather than the Visual Studio
+template it started as: two entries in it are load-bearing, `*.ini` and the
+negation that lets the test fixture through.
 
 ## The binary
 
