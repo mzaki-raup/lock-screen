@@ -176,6 +176,23 @@ jobs:
       # Skipped, with a warning in the log, when no certificate is configured --
       # so a release is still possible before one exists, and it is obvious in
       # the job output which releases are unsigned.
+      #
+      # **What a `.pfx` in a secret can and cannot be.** This step takes the
+      # certificate as base64 in `CERT_PFX_BASE64`, which works for a
+      # self-signed or internal-CA certificate. It cannot work for a publicly
+      # trusted one: since June 2023 the CA/Browser Forum baseline requirements
+      # oblige code-signing keys to be generated and held in hardware (FIPS
+      # 140-2 Level 2 or equivalent), so no CA will issue an exportable PFX for
+      # an OV or EV certificate any more. A trusted signature from CI therefore
+      # needs a signing *service* that holds the key -- Azure Trusted Signing,
+      # DigiCert KeyLocker, SSL.com eSigner and the like -- or a hardware token,
+      # which does not suit an unattended runner. Whichever is chosen replaces
+      # the `/f` and `/p` arguments below; everything else here stays.
+      #
+      # The mechanics were verified against a throwaway self-signed certificate
+      # rather than guessed at: the base64 round-trip, the signtool discovery,
+      # the command line and the DigiCert timestamp server all work. What a
+      # self-signed certificate cannot do is pass the verification below.
       - name: Sign
         env:
           CERT_PFX_BASE64: ${{ secrets.CERT_PFX_BASE64 }}
@@ -191,12 +208,32 @@ jobs:
           $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
             Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1 -ExpandProperty FullName
           if (-not $signtool) { throw 'signtool.exe not found on the runner' }
+
           & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
             /f $pfx /p $env:CERT_PASSWORD target/release/LockScreen.exe
-          if ($LASTEXITCODE -ne 0) { throw "signtool failed with $LASTEXITCODE" }
-          # Remove it from the runner even though the runner is ephemeral.
+          $signed = $LASTEXITCODE
+          # Removed before the result is acted on, so the key does not outlive
+          # this step even when the signing failed. The runner is ephemeral
+          # anyway; this does not rely on that.
           Remove-Item $pfx -Force
+          if ($signed -ne 0) { throw "signtool sign failed with exit code $signed" }
+
+          # Verified, and a failure explained rather than left as a bare exit
+          # code. signtool returns 1 when the chain does not terminate in a root
+          # this runner trusts, which is exactly what a self-signed certificate
+          # produces -- the file *is* signed, and Windows still shows "Unknown
+          # Publisher" to everyone who runs it. Publishing that as a signed
+          # release would be worse than publishing an unsigned one, because it
+          # looks like something it is not. So it stops here.
           & $signtool verify /pa /v target/release/LockScreen.exe
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host 'The file was signed, but the signature does not chain to a root this runner trusts.'
+            Write-Host 'Windows would still show "Unknown Publisher" to everyone who runs it, so this'
+            Write-Host 'release is not being published as signed. A self-signed or internal-CA'
+            Write-Host 'certificate does exactly this -- see the comment above this step.'
+            throw 'the signature did not verify against a trusted root'
+          }
+          Write-Host 'signed, timestamped, and verified against a trusted root'
 
       - name: Checksums and archive
         run: |

@@ -835,6 +835,15 @@ would cost.
 The real prerequisite is no longer a signing key for the manifest — it is the Authenticode
 certificate in phase 06, which the release workflow needs anyway.
 
+> **What that prerequisite turned out to mean.** The signing step was verified against a throwaway
+> self-signed certificate after 0.2.0 shipped: the mechanics all work, including timestamping. But a
+> `.pfx` in a CI secret can only ever be self-signed or internal-CA, because since June 2023 the
+> CA/Browser Forum requires code-signing keys to be generated and held in hardware — so no CA issues
+> an exportable PFX for an OV or EV certificate. `signtool verify` correctly refuses such a
+> signature, which means "get a certificate" is really "choose a key-holding signing service"
+> (Azure Trusted Signing, DigiCert KeyLocker, SSL.com eSigner) or "accept that CI cannot sign".
+> A decision with a recurring cost, not a code change.
+
 ---
 
 ## 10. Phased plan

@@ -203,9 +203,12 @@ Honest ones. The first two are properties of the approach, not bugs to be fixed.
   enabled, anyone who can speak can unlock the machine. That is why it is off by default, why the
   confidence floor is raised to High, and why it is described above as a convenience rather than a
   factor. Leave it off unless you have thought about that.
-- **Releases are unsigned.** `SHA256SUMS.txt` travels the same channel as the binary, so it protects
-  against a network attacker and a truncated download — not against a compromise of the forge
-  itself. Only Authenticode covers that, and the certificate is an open question.
+- **Releases are unsigned**, so Windows shows "Unknown Publisher" when you run the program.
+  `SHA256SUMS.txt` travels the same channel as the binary, so it protects against a network attacker
+  and a truncated download — not against a compromise of the forge itself. Only Authenticode covers
+  that. The release workflow can sign and has been tested end to end; what is missing is a
+  certificate, and a publicly trusted one cannot simply be put in a CI secret — code-signing keys
+  must live in hardware, so signing from CI needs a key-holding service or a hardware token.
 - **Windows 10 has not been run on.** The supported floor is 17763 and the code paths are there,
   but no Windows 10 machine has been available to confirm it. Note that Windows 10 gets **no blur**
   either way: the only mechanism for it there is the undocumented
