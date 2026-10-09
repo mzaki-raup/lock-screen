@@ -22,6 +22,13 @@ pub fn run(_config_path: &Path, config: Config) -> Result<(), String> {
         // GetMessageW returned WM_QUIT, or every monitor went away. Neither is
         // an unlock, so say so rather than exiting 0 and looking like one.
         overlay::Outcome::Interrupted => Err("The lock screen was interrupted before it was unlocked.".to_owned()),
+        overlay::Outcome::PromptFailed => {
+            audit("the unlock prompt could not be opened; the lock was released");
+            Err("The unlock prompt could not be opened, so the lock has been released rather than \
+                 leaving the keyboard captured.\n\n\
+                 This is a bug. There is a note of it in LockScreenData/lockscreen.log."
+                .to_owned())
+        }
     }
 }
 

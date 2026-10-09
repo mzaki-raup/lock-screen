@@ -41,7 +41,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::PCWSTR;
 use zeroize::Zeroizing;
 
-use super::{hello, ui};
+use super::{hello, hooks, ui};
 
 const ID_PASSWORD: u16 = 10;
 const ID_RETRY_HELLO: u16 = 11;
@@ -104,6 +104,12 @@ pub fn ask(owner: HWND, config: &Config) -> Answer {
     if STATE.with(|s| s.borrow().is_some()) {
         return Answer::Cancelled;
     }
+
+    // Tells the keyboard hook to pass ordinary keystrokes through: this window
+    // has the focus and the user is about to type a password into it, and
+    // Windows Hello's PIN entry needs them too. Dropped on every exit path, so
+    // the lock cannot be left in a state where it swallows nothing.
+    let _typing = hooks::PromptVisible::new();
 
     let dpi = ui::dpi_of(owner);
     let s = |v: i32| ui::scale(v, dpi);

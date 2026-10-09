@@ -25,13 +25,13 @@
 //! otherwise sit uncovered, which is a hole in the lock that the .NET version
 //! has as well.
 //!
-//! # What is still phase 02
+//! # Input
 //!
-//! Waking on a **key** press needs a global `WH_KEYBOARD_LL` hook: the overlay
-//! is `WS_EX_NOACTIVATE` and never holds the keyboard focus, so key events do
-//! not reach it. Mouse clicks do, because a topmost window that is not
-//! click-through receives clicks over its own area. Suppressing Win, Alt+Tab
-//! and Ctrl+Shift+Esc is the same phase.
+//! A `WS_EX_NOACTIVATE` window never holds the keyboard focus, so key events
+//! never arrive here. [`super::hooks`] installs the global hooks that wake the
+//! prompt on any key and swallow the combinations that would otherwise get past
+//! the lock; the window procedure below still handles clicks landing on the
+//! overlay itself, which is the cheaper path for the common case.
 
 use std::cell::Cell;
 
@@ -51,11 +51,16 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::PCWSTR;
 
-use super::{backdrop, monitors, ui, unlock};
+use super::{backdrop, hooks, monitors, ui, unlock};
 
 /// Posted to an overlay window to bring the prompt up. Phase 02's hooks use
 /// this; the window procedure sets the same flag directly for mouse clicks.
 const WM_APP_WAKE: u32 = WM_APP + 10;
+
+/// A cancel returning faster than this did not come from a person.
+const INSTANT_CANCEL: std::time::Duration = std::time::Duration::from_millis(50);
+/// How many of those in a row before giving up rather than spinning.
+const MAX_INSTANT_CANCELS: u32 = 3;
 
 /// How the lock ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +69,10 @@ pub enum Outcome {
     /// The loop ended without an unlock -- a `WM_QUIT`, which in practice means
     /// something asked the process to exit.
     Interrupted,
+    /// The prompt could not be opened, repeatedly. Reported separately from
+    /// [`Outcome::Interrupted`] because it is a bug to chase rather than
+    /// something the user did, and because unwinding releases the input hooks.
+    PromptFailed,
 }
 
 thread_local! {
@@ -82,6 +91,10 @@ pub struct Session {
     /// Restores `DisableTaskMgr` on drop. `None` if the policy could not be
     /// written, which must not stop the screen from locking.
     _policy: Option<TaskManagerPolicy>,
+    /// Unhooks the keyboard and mouse on drop. `None` if Windows refused:
+    /// an overlay without key suppression is weaker, but one that refuses to
+    /// appear protects nothing at all.
+    _hooks: Option<hooks::Hooks>,
     blurred: bool,
     alpha: u8,
 }
@@ -111,13 +124,21 @@ impl Session {
 
         register_class();
 
-        let mut session = Self { windows: Vec::new(), _policy: None, blurred, alpha };
+        let mut session = Self { windows: Vec::new(), _policy: None, _hooks: None, blurred, alpha };
         session.build_windows()?;
 
         // Best-effort. A lock screen that refuses to appear because a registry
         // value would not write is worse than one with Task Manager reachable,
         // and on a managed machine group policy may own this key.
         session._policy = TaskManagerPolicy::disable().ok();
+
+        // Installed on this thread, which owns the message loop: a low-level
+        // hook is called on the installing thread and Windows must be able to
+        // dispatch to it. Attached to the first overlay, which is the window
+        // the wake message is posted to.
+        if let Some(&first) = session.windows.first() {
+            session._hooks = hooks::Hooks::install(first).ok();
+        }
         Ok(session)
     }
 
@@ -221,6 +242,7 @@ impl Session {
     /// The message loop. Returns when the user authenticates.
     fn pump(&mut self, config: &Config) -> Outcome {
         let mut msg = MSG::default();
+        let mut instant_cancels = 0u32;
         // The first prompt is immediate: the machine has just locked and
         // somebody is standing in front of it.
         WAKE.set(true);
@@ -237,11 +259,30 @@ impl Session {
 
             if WAKE.replace(false) {
                 let anchor = self.window_under_cursor();
+                let started = std::time::Instant::now();
                 match unlock::ask(anchor, config) {
                     unlock::Answer::Unlocked(via) => return Outcome::Unlocked(via),
-                    // Still locked. Re-assert and wait: the prompt is gone, the
-                    // lock is not.
-                    unlock::Answer::Cancelled => self.reassert(),
+                    unlock::Answer::Cancelled => {
+                        // A cancel that comes back faster than any human could
+                        // click is not a cancel -- it is the prompt failing to
+                        // open. That matters more here than it looks: with the
+                        // hooks installed, keystrokes are swallowed whenever no
+                        // prompt is visible, so a prompt that cannot open would
+                        // spin forever with the keyboard dead system-wide.
+                        // Ctrl+Alt+Del would still work, but a lock screen
+                        // should not need rescuing.
+                        if started.elapsed() < INSTANT_CANCEL {
+                            instant_cancels += 1;
+                            if instant_cancels >= MAX_INSTANT_CANCELS {
+                                return Outcome::PromptFailed;
+                            }
+                        } else {
+                            instant_cancels = 0;
+                        }
+                        // Still locked. Re-assert and wait: the prompt is gone,
+                        // the lock is not.
+                        self.reassert();
+                    }
                 }
             }
 

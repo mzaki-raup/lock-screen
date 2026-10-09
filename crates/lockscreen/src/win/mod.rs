@@ -16,6 +16,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
 pub mod backdrop;
 pub mod hello;
+pub mod hooks;
 pub mod monitors;
 pub mod overlay;
 pub mod ui;
