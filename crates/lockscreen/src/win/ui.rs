@@ -210,12 +210,30 @@ mod tests {
     }
 
     #[test]
-    fn a_window_larger_than_the_screen_is_pinned_to_the_top_left() {
-        // Whatever this machine's monitors are, an absurdly large window must
-        // come back at or before the work area's origin, never pushed negative
-        // past it by the min/max ordering.
+    fn a_window_larger_than_the_screen_is_pinned_to_some_monitors_origin() {
+        // An absurdly large window must come back at a work area's origin, not
+        // pushed negative past it by the min/max ordering.
+        //
+        // Deliberately not compared against `work_area_at_cursor()`. An earlier
+        // version of this test did, and passed only because the machine had one
+        // monitor: `keep_on_screen` picks the monitor nearest the *window's
+        // centre*, which for an oversized window is far off the desktop and
+        // resolves to whichever monitor is nearest that point -- not the one the
+        // pointer happens to be on. The real invariant is that the answer is
+        // some monitor's origin, so that is what is asserted.
         let (x, y) = keep_on_screen(0, 0, 1 << 20, 1 << 20);
-        let wa = work_area_at_cursor();
-        assert_eq!((x, y), (wa.left, wa.top));
+        let origins: Vec<(i32, i32)> =
+            super::super::monitors::all().iter().map(|s| (s.work.left, s.work.top)).collect();
+        assert!(origins.contains(&(x, y)), "({x}, {y}) is not the origin of any monitor's work area: {origins:?}");
+    }
+
+    #[test]
+    fn a_window_that_fits_is_left_where_it_was_asked_for() {
+        // The common case, and the one the oversized test cannot cover: a small
+        // window well inside a monitor must not be moved at all.
+        let screens = super::super::monitors::all();
+        let screen = screens.iter().find(|s| s.primary).or_else(|| screens.first()).expect("a monitor");
+        let (want_x, want_y) = (screen.work.left + 40, screen.work.top + 40);
+        assert_eq!(keep_on_screen(want_x, want_y, 200, 150), (want_x, want_y));
     }
 }

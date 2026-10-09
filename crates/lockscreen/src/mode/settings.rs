@@ -21,6 +21,7 @@
 use std::path::Path;
 
 use lockscreen_core::config::{self, Config};
+use lockscreen_core::log;
 use windows::Win32::Foundation::HWND;
 
 use crate::win::{settings, unlock};
@@ -35,7 +36,7 @@ pub fn run(config_path: &Path, config: Config) -> Result<(), String> {
     match unlock::ask(HWND::default(), &config, unlock::Purpose::Authorize) {
         unlock::Answer::Unlocked(via) => {
             if via == unlock::Via::Master {
-                audit("master password used to open settings");
+                log::audit("master password used to open settings");
             }
         }
         unlock::Answer::Cancelled => {
@@ -54,7 +55,7 @@ pub fn run(config_path: &Path, config: Config) -> Result<(), String> {
         match unlock::ask(HWND::default(), &config, unlock::Purpose::Authorize) {
             unlock::Answer::Unlocked(via) => {
                 if via == unlock::Via::Master {
-                    audit("master password used to authorise a credential change");
+                    log::audit("master password used to authorise a credential change");
                 }
             }
             unlock::Answer::Cancelled => {
@@ -70,24 +71,8 @@ pub fn run(config_path: &Path, config: Config) -> Result<(), String> {
     config::save(config_path, &updated).map_err(|e| format!("{} could not be written: {e}", config_path.display()))?;
 
     if touched_credentials {
-        audit("a credential was changed from settings");
+        log::audit("a credential was changed from settings");
     }
 
     Err(format!("Settings saved to\n{}", config_path.display()))
-}
-
-/// Append one line to `LockScreenData/lockscreen.log` beside the executable.
-///
-/// Best-effort, and deliberately sparse: who authorised what, never what they
-/// typed. Phase 06 replaces this with real structured logging.
-fn audit(line: &str) {
-    use std::io::Write;
-
-    let Ok(dir) = lockscreen_core::paths::data_dir() else { return };
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("lockscreen.log")) {
-        let _ = writeln!(file, "{line}");
-    }
 }

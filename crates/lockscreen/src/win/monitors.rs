@@ -30,6 +30,9 @@ pub struct Screen {
     /// The part not covered by the taskbar and other appbars.
     pub work: RECT,
     pub primary: bool,
+    /// Kept so [`Screen::dpi`] can ask about this monitor specifically rather
+    /// than re-deriving a handle from a coordinate.
+    pub handle: HMONITOR,
 }
 
 impl Screen {
@@ -44,6 +47,23 @@ impl Screen {
     /// Whether a point in virtual-desktop coordinates falls on this monitor.
     pub fn contains(&self, x: i32, y: i32) -> bool {
         x >= self.bounds.left && x < self.bounds.right && y >= self.bounds.top && y < self.bounds.bottom
+    }
+
+    /// This monitor's effective DPI, or 96 if Windows will not say.
+    ///
+    /// Per-monitor, not per-process: on a mixed-DPI desktop these differ, and
+    /// sizing a window with the wrong one is defect D2. The overlay itself needs
+    /// no scaling -- it is a fill measured in physical pixels -- but the prompt
+    /// drawn over it does, and that takes its DPI from the window it is parented
+    /// to rather than from here.
+    pub fn dpi(&self) -> u32 {
+        use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+        let mut x = 0;
+        let mut y = 0;
+        // SAFETY: `self.handle` came from EnumDisplayMonitors, and both
+        // out-parameters are live for the call.
+        let ok = unsafe { GetDpiForMonitor(self.handle, MDT_EFFECTIVE_DPI, &mut x, &mut y) };
+        if ok.is_ok() && x > 0 { x } else { 96 }
     }
 }
 
@@ -67,6 +87,7 @@ fn describe(handle: HMONITOR) -> Option<Screen> {
         bounds: info.monitorInfo.rcMonitor,
         work: info.monitorInfo.rcWork,
         primary: info.monitorInfo.dwFlags & MONITORINFOF_PRIMARY != 0,
+        handle,
     })
 }
 
@@ -113,7 +134,7 @@ mod tests {
 
     fn screen(left: i32, top: i32, w: i32, h: i32, primary: bool) -> Screen {
         let bounds = RECT { left, top, right: left + w, bottom: top + h };
-        Screen { device: format!("\\\\.\\DISPLAY{left}"), bounds, work: bounds, primary }
+        Screen { device: format!("\\\\.\\DISPLAY{left}"), bounds, work: bounds, primary, handle: HMONITOR::default() }
     }
 
     #[test]
@@ -126,6 +147,39 @@ mod tests {
             // Physical pixels. A monitor narrower than 640 would mean the DPI
             // units got mixed up somewhere, which is exactly defect D2.
             assert!(s.width() >= 640, "suspiciously narrow, check DPI awareness: {s:?}");
+        }
+    }
+
+    /// Prints the real layout, including per-monitor DPI. Ignored because it
+    /// asserts nothing; run it deliberately when a report mentions a monitor
+    /// being missed or mis-sized:
+    ///
+    /// ```text
+    /// cargo test -p lockscreen --bin LockScreen layout -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "diagnostic; prints the monitor layout"]
+    fn layout() {
+        for s in all() {
+            println!(
+                "{:<14} {:>5}x{:<5} at ({:>6},{:>6})  dpi {:>3} ({}%){}",
+                s.device,
+                s.width(),
+                s.height(),
+                s.bounds.left,
+                s.bounds.top,
+                s.dpi(),
+                s.dpi() * 100 / 96,
+                if s.primary { "  primary" } else { "" }
+            );
+        }
+    }
+
+    #[test]
+    fn every_monitor_reports_a_plausible_dpi() {
+        for s in all() {
+            let dpi = s.dpi();
+            assert!((96..=960).contains(&dpi), "{}: implausible dpi {dpi}", s.device);
         }
     }
 

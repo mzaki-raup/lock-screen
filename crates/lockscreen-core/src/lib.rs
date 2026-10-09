@@ -14,13 +14,20 @@
 //! - [`credential`] verifies passwords against Argon2id hashes, and can still
 //!   read the old DPAPI-encrypted value in order to migrate away from it.
 //! - [`policy`] holds the Task Manager policy key, restoring it on drop.
+//! - [`instance`] makes sure only one lock screen runs per session.
+//! - [`log`] is the one place anything is written to disk for diagnostics,
+//!   replacing the seven `catch { }` blocks the .NET version swallows failures
+//!   in.
 //! - [`sound`] is the handful of system sounds the UI plays.
 
 pub mod config;
 pub mod credential;
+pub mod log;
 pub mod paths;
 pub mod sound;
 
+#[cfg(windows)]
+pub mod instance;
 #[cfg(windows)]
 pub mod policy;
 
