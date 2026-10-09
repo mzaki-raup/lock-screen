@@ -45,7 +45,8 @@ the per-user policy that disables Task Manager. Both are undone on unlock.
 
 ```bash
 dotnet restore
-dotnet build LockScreenSolution.sln
+dotnet build LockScreenApp/LockScreenApp.csproj
+dotnet build SettingsApp/SettingsApp.csproj
 ```
 
 Run either app:
