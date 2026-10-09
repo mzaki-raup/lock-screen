@@ -17,8 +17,9 @@
 //! started. Each mode also runs in its own process, so the overlay's hooks are
 //! never loaded alongside the settings UI.
 
-// A GUI subsystem binary has no console attached, so printing goes nowhere
-// unless something calls AttachConsole first. See `report` below.
+// A GUI subsystem binary has no console of its own, so printing goes nowhere
+// unless it inherited a stdout or attaches to the parent's console. See
+// `report` below.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod mode;
@@ -159,18 +160,31 @@ fn version_line() -> String {
 
 /// Say something to the user.
 ///
-/// A GUI-subsystem binary has no stdout to write to, so this attaches to the
-/// parent console when there is one -- someone running `--version` from a
-/// terminal -- and otherwise falls back to a message box. Phase 06 replaces the
-/// message box with the real UI; until then it is better than silence.
+/// A GUI-subsystem binary has no stdout of its own, so this looks for one in
+/// two places before giving up and showing a message box:
+///
+/// 1. a handle it **inherited**, which is what happens when the caller
+///    redirected the output -- a pipe, a file, a test harness;
+/// 2. the parent's **console**, for someone running `--version` from a
+///    terminal.
+///
+/// The order matters. Checking only for a console, as this did before phase 08,
+/// meant that a caller who redirected the output of a copy started without a
+/// console got a modal dialog instead of a line of text -- and nothing to click
+/// it with. The end-to-end tests in `tests/cli.rs` are exactly that caller, and
+/// would have hung.
+///
+/// Printing is guarded rather than attempted, because `println!` *panics* when
+/// stdout cannot be written to, which for this binary is the normal case.
 fn report(message: &str) {
     #[cfg(windows)]
     {
-        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-        // SAFETY: no arguments to get wrong; fails harmlessly when there is no
-        // parent console, which is the case when launched from Explorer.
-        let attached = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }.is_ok();
-        if attached {
+        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE};
+        // SAFETY: neither call takes anything that can be got wrong, and both
+        // fail harmlessly -- no inherited handle, or no parent console, which is
+        // the case when launched from Explorer.
+        let inherited = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }.is_ok_and(|h| !h.is_invalid());
+        if inherited || unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }.is_ok() {
             println!("{message}");
             return;
         }

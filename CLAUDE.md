@@ -17,6 +17,10 @@ for reference while the port finishes.
   decision taken so far. **Read it before changing architecture**; it carries the
   reasoning, the measurements, and the defect numbering (D1–D7) used throughout
   the code comments.
+- **`PARITY.md`** — phase 08. What the suite proves, what was measured on real
+  mixed-DPI hardware, and the checklist of parity checks that need a person at
+  the keyboard. Add to the checklist rather than quietly deciding something is
+  verified.
 
 ## Build and test
 
@@ -29,6 +33,18 @@ cargo fmt --check
 
 All four must pass. They are the same gates the release workflow runs, so a
 change that fails `clippy -D warnings` locally will fail the release too.
+
+Three diagnostics are ignored by default, because they assert nothing and their
+output depends on the machine. Run them deliberately:
+
+```bash
+# what this machine can do: folder, config, monitors, Hello, microphone
+cargo test -p lockscreen --bin LockScreen environment -- --ignored --nocapture
+# the monitor layout, with per-monitor DPI
+cargo test -p lockscreen --bin LockScreen layout -- --ignored --nocapture
+# what a DPI-unaware process sees instead -- the measurement behind D2
+cargo test -p lockscreen --bin LockScreen dpi_virtualisation -- --ignored --nocapture
+```
 
 The legacy .NET apps, if you need to compare behaviour:
 
@@ -130,3 +146,17 @@ Pure logic is separated from Win32 so it can be tested without a window —
 by the real .NET code path. It is the regression gate on config compatibility
 and it caught two traps a hand-written fixture would have missed: the .NET writer
 emits `key = value` with spaces, and the file carries a UTF-8 BOM.
+
+Two integration tests drive real processes, and both have a rule attached:
+
+- **`crates/lockscreen/tests/cli.rs`** runs the built executable. It must never
+  reach the overlay — that would cover the screen, install a keyboard hook and
+  wait for a password on whoever's machine is running the suite. Every
+  invocation goes through `run`, which refuses args carrying no safe flag, and
+  every run has a deadline so a build that opens a window fails instead of
+  hanging. Keep both if you add a case.
+- **`crates/lockscreen-core/tests/instance_across_processes.rs`** re-runs itself
+  to hold the instance mutex from a second process. Only **one** test there may
+  claim the name: the mutex is session-wide and `cargo test` runs a binary's
+  tests in parallel, which is how `instance.rs` once ended up with two tests
+  that passed by scheduling.

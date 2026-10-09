@@ -2,7 +2,7 @@
 
 **Subject:** LockScreenSolution v1.1.1.0 (.NET 8 WPF, 1,667 lines C#, 2 apps)
 **Probed on:** Windows 11 Pro 26200 · rustc 1.99.0 · `windows` 0.62.2
-**Date:** 9 October 2026 · rev. 4
+**Date:** 9 October 2026 · rev. 5
 **Rendered version:** <https://claude.ai/code/artifact/dad05b84-8822-421a-89b2-eccbd5e77f9e>
 
 > **Revision 2** recorded four decisions taken after the first draft: the master password is set at
@@ -25,6 +25,12 @@
 > two claims in earlier revisions — both toolkits are ~10 MB rather than the few MB estimated, and
 > Slint's royalty-free desktop licence costs nothing rather than needing a budget. The unlock dialog
 > has been prototyped against the decision and is in the repository.
+>
+> **Revision 5** records phase 08, the parity validation, in [`PARITY.md`](PARITY.md) — what the
+> suite now proves, what was measured on real mixed-DPI hardware, and the checklist of what still
+> needs a person at the keyboard. It also **corrects D2**: the mechanism described in revisions 1–4
+> was wrong, and the symptom predicted from it does not follow. See the note in
+> [§6](#d2--overlay-is-mis-sized-on-mixed-dpi-setups).
 
 ---
 
@@ -302,10 +308,22 @@ translation — so it only gets fixed if someone is rewriting the overlay.
 
 ### D2 — Overlay is mis-sized on mixed-DPI setups
 
-`Screen.Bounds` returns physical pixels; assigning them to WPF's `Left/Top/Width/Height`
-(`MainWindow.xaml.cs:89–106`) treats them as device-independent units. With no DPI awareness
-declared anywhere in the project, a 150%-scaled monitor leaves the desktop uncovered — a visible
-hole in a lock screen.
+No DPI awareness is declared anywhere in the project: no `app.manifest`, no
+`ApplicationHighDpiMode`, no `SetHighDpiMode` call, and the manifest the .NET SDK embedded in the
+built `LockScreen.exe` carries only a `requestedExecutionLevel`. Windows therefore virtualises every
+coordinate the process reads. Measured on mixed-DPI hardware in phase 08 (`PARITY.md` §2): a
+DPI-unaware thread reads a 150%-scaled 1920x1080 monitor as **1280x720**, two thirds of its real
+size, and the overlay at `MainWindow.xaml.cs:89–106` is built from exactly those numbers.
+
+> **Corrected in rev. 5.** Revisions 1–4 said `Screen.Bounds` "returns physical pixels" and
+> concluded that a scaled monitor "leaves the desktop uncovered". The first half is wrong — in an
+> unaware process those bounds are already virtualised — and the conclusion does not follow from
+> it: WPF's device-independent unit in that process is one virtualised pixel, so the window matches
+> the monitor in that coordinate space and Windows stretches it back up. The expected symptom is a
+> soft, bitmap-stretched overlay and prompt rather than a hole. That prediction is item 2 of the
+> phase 08 checklist and is **not yet confirmed on screen**, so it is flagged rather than asserted.
+> The defect itself stands: the app does no DPI handling, and a blurry password prompt on one of two
+> monitors is visibly worse than a sharp one.
 
 *Fix:* raw Win32 works in physical pixels end to end, and `PerMonitorV2` is declared in
 `assets/app.manifest` — the house mechanism, and better than an API call because it applies before
@@ -822,6 +840,10 @@ unfamiliar territory.
 | **06** | **Hardening and ship.** Single-instance guard (absent today — overlays can stack), structured logging instead of `catch {}`, portable-folder writability check, Authenticode signing, release workflow, a zip rather than an installer, shortcuts carrying `--settings`. | 3–4 d |
 | **07** | **In-app updater.** *Deferrable.* Adapt the sibling's `release.rs` + `win/update.rs`: WinHTTP, Forgejo releases API, `SHA256SUMS.txt` check, rename-aside install, downgrade refusal, settings-only entry point, no restart-into-lock. | 2–3 d |
 | **08** | **Parity validation.** Side-by-side on mixed-DPI multi-monitor, with and without Hello hardware, with and without a microphone, and against a `config.ini` from the .NET build. | 3–4 d |
+
+Phase 08 is recorded separately, in [`PARITY.md`](PARITY.md): the machine-checkable half went into
+the test suite, and the half that needs somebody at the keyboard is a checklist there. It is also
+where D2's correction came from.
 
 **Core total (phases 00–06, 08): 25–32 working days.** With the updater: **27–35 days.** Call it
 five to seven calendar weeks for one developer with other duties. Phases 00–03 are over half of it

@@ -175,6 +175,119 @@ mod tests {
         }
     }
 
+    /// What the same enumeration looks like to a **DPI-unaware** thread, which
+    /// is what the .NET app is.
+    ///
+    /// `LockScreenApp.exe` has no DPI declaration at all -- the manifest the
+    /// .NET SDK embeds in it carries only a `requestedExecutionLevel` -- so
+    /// Windows virtualises coordinates for it. This runs `all()` twice, once
+    /// under each awareness, and returns the pair. It is the measurement behind
+    /// defect D2.
+    fn both_awarenesses() -> (Vec<Screen>, Vec<Screen>) {
+        use windows::Win32::UI::HiDpi::{
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, DPI_AWARENESS_CONTEXT_UNAWARE, SetThreadDpiAwarenessContext,
+        };
+        // SAFETY: both contexts are documented constants, and the thread's
+        // original context is put back before returning.
+        unsafe {
+            let previous = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE);
+            let unaware = all();
+            SetThreadDpiAwarenessContext(if previous.is_invalid() {
+                DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+            } else {
+                previous
+            });
+            (unaware, all())
+        }
+    }
+
+    /// Prints what each awareness sees. Ignored because the interesting output
+    /// depends on the hardware: on a single-DPI desktop the two agree, which is
+    /// precisely why D2 went unnoticed for so long.
+    ///
+    /// ```text
+    /// cargo test -p lockscreen --bin LockScreen dpi_virtualisation -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "diagnostic; prints what each DPI awareness sees"]
+    fn dpi_virtualisation() {
+        let (unaware, aware) = both_awarenesses();
+        println!("{:<14} {:>12} {:>12} {:>6}", "device", "unaware", "per-monitor", "dpi");
+        for screen in &aware {
+            let same = unaware.iter().find(|u| u.device == screen.device);
+            println!(
+                "{:<14} {:>12} {:>12} {:>6}",
+                screen.device,
+                same.map(|u| format!("{}x{}", u.width(), u.height())).unwrap_or_else(|| "-".to_owned()),
+                format!("{}x{}", screen.width(), screen.height()),
+                screen.dpi()
+            );
+        }
+    }
+
+    /// The manifest regression test, and the one that would have caught D2.
+    ///
+    /// Two assertions, both hardware-independent in form:
+    ///
+    /// - a DPI-unaware thread never sees a monitor as *larger* than a
+    ///   per-monitor-aware one does, because virtualisation only ever scales
+    ///   down -- `physical * 96 / dpi`;
+    /// - on a monitor scaled above 100% the two views must **differ**. If they
+    ///   agree, this process is not per-monitor aware after all, which means
+    ///   `app.manifest` stopped being embedded -- a silent failure that turns
+    ///   every coordinate in the overlay into a virtualised one.
+    ///
+    /// The second assertion is vacuous on a desktop where every monitor runs at
+    /// 100%, and live on one that does not. That is the whole story of D2: the
+    /// bug is invisible on the hardware most people develop on.
+    #[test]
+    fn this_process_really_is_per_monitor_aware() {
+        let (unaware, aware) = both_awarenesses();
+        assert_eq!(unaware.len(), aware.len(), "the same monitors should be enumerated either way");
+
+        let mut scaled = 0;
+        for screen in &aware {
+            let Some(same) = unaware.iter().find(|u| u.device == screen.device) else {
+                panic!("{} was missing from the unaware enumeration", screen.device);
+            };
+            assert!(
+                same.width() <= screen.width() && same.height() <= screen.height(),
+                "virtualisation should only ever scale down: {} unaware {}x{} vs aware {}x{}",
+                screen.device,
+                same.width(),
+                same.height(),
+                screen.width(),
+                screen.height()
+            );
+
+            if screen.dpi() > 96 {
+                scaled += 1;
+                assert_ne!(
+                    (same.width(), same.height()),
+                    (screen.width(), screen.height()),
+                    "{} runs at {}% but both awarenesses agree, so this process is not per-monitor aware -- \
+                     check that app.manifest is still being embedded",
+                    screen.device,
+                    screen.dpi() * 100 / 96
+                );
+                // What the .NET app hands WPF for this monitor, measured rather
+                // than argued: the unaware view, which is smaller.
+                assert_eq!(
+                    same.width(),
+                    screen.width() * 96 / screen.dpi() as i32,
+                    "the unaware width should be the physical one scaled by 96/dpi"
+                );
+            }
+        }
+
+        if scaled == 0 {
+            // Not a failure: it only means this machine cannot demonstrate D2.
+            // Said out loud so nobody reads a pass here as proof of more than
+            // it is.
+            println!("every monitor runs at 100%, so the per-monitor assertions above were vacuous");
+        }
+    }
+
     #[test]
     fn every_monitor_reports_a_plausible_dpi() {
         for s in all() {
