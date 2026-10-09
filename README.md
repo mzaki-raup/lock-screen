@@ -139,7 +139,16 @@ Windows API the current app depends on has been verified callable from Rust, and
 get fixed as part of the rewrite.
 
 The port is **properly portable**: `config.ini` resolves against the executable's own folder via
-`GetModuleFileNameW`, so it no longer matters where the app is launched from. Nothing is written to
+`GetModuleFileNameW`, so it no longer matters where the app is launched from. Everything it writes
+sits beside the exe:
+
+```
+LockScreen.exe
+config.ini            your settings
+LockScreenData/       logs and update downloads - derived, safe to delete
+```
+
+ Nothing is written to
 `%APPDATA%` or `%LOCALAPPDATA%`, there is no installer, and a copy of the folder carries its settings
 with it — which works because the password becomes an Argon2id hash rather than a DPAPI blob tied to
 one user on one machine. The supported floor stays **Windows 10 build 17763 (1809) and later**,

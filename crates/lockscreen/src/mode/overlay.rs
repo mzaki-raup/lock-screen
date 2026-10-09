@@ -25,7 +25,7 @@ pub fn run(_config_path: &Path, config: Config) -> Result<(), String> {
     }
 }
 
-/// Append one line to `data/lockscreen.log` beside the executable.
+/// Append one line to `LockScreenData/lockscreen.log` beside the executable.
 ///
 /// Best-effort: failing to write a log line must never stop someone unlocking
 /// their own machine.

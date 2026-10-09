@@ -20,7 +20,12 @@ use std::path::{Path, PathBuf};
 pub const CONFIG_FILE: &str = "config.ini";
 
 /// Derived state -- update downloads, logs. Safe to delete at any time.
-pub const DATA_DIR: &str = "data";
+///
+/// Named for the app rather than a bare `data`, because a portable app gets
+/// unpacked wherever somebody drops it: a folder called `data` beside the exe
+/// is a collision waiting to happen, and quietly writing into one that was
+/// already there would be a poor way to introduce ourselves.
+pub const DATA_DIR: &str = "LockScreenData";
 
 /// The directory the running executable sits in.
 ///
@@ -105,9 +110,15 @@ mod tests {
     }
 
     #[test]
-    fn data_dir_sits_beside_the_executable() {
+    fn data_dir_sits_beside_the_executable_and_is_named_for_the_app() {
         let dir = exe_dir().expect("an executable directory");
-        assert_eq!(data_dir().expect("a data path").parent(), Some(dir.as_path()));
+        let data = data_dir().expect("a data path");
+        assert_eq!(data.parent(), Some(dir.as_path()));
+        // Pinned deliberately. Renaming this orphans an installed copy's logs
+        // and half-finished update downloads, so it should take a failing test
+        // to do it rather than a quiet edit.
+        assert_eq!(data.file_name().and_then(|n| n.to_str()), Some("LockScreenData"));
+        assert_ne!(DATA_DIR, "data", "too generic for a folder that sits beside a portable exe");
     }
 
     #[test]

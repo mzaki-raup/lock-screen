@@ -555,14 +555,16 @@ relative path.
 ```
 LockScreen.exe        the whole program
 config.ini            settings + Argon2id verifiers, beside the exe
-data/
+LockScreenData/
   update/             updater scratch space (§9)
   lockscreen.log      diagnostics
 ```
 
-`config.ini` is the only file holding user intent; everything under `data/` is derived and safe to
-delete. Keeping transient files in a subdirectory rather than loose beside the exe follows the
-sibling, which puts its own `data\crash.log` and `data\update\` there.
+`config.ini` is the only file holding user intent; everything under `LockScreenData/` is derived and
+safe to delete. It is named for the app rather than a bare `data` because a portable app gets
+unpacked wherever somebody drops it, and a folder called `data` beside the exe is a collision
+waiting to happen. Keeping transient files in a subdirectory rather than loose beside the exe follows the
+sibling, which keeps its own `crash.log` and `update\` in one such directory.
 
 Four consequences worth planning for rather than discovering:
 
@@ -735,7 +737,7 @@ surface. The updater writes into the folder it already lives in:
 
 | Step | Location |
 | --- | --- |
-| Download | `data/update/` beside the exe |
+| Download | `LockScreenData/update/` beside the exe |
 | Verify | in place, against `SHA256SUMS.txt` |
 | Install | rename `LockScreen.exe` to `LockScreen.old.exe`, move the new one in, roll back on failure |
 | Clean up | delete the leftover on next start |
