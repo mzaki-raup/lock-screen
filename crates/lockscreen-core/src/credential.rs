@@ -15,8 +15,13 @@ use argon2::password_hash::phc::PasswordHash;
 use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use zeroize::Zeroizing;
 
-/// Which credential a verification was against. The master password is a
-/// recovery credential, so its uses are worth recording separately.
+/// Which of the two credentials is in play.
+///
+/// Carries both of the things that differ between them: the master password is
+/// a recovery credential, so its uses are worth recording separately, and it
+/// has a longer minimum length -- see [`Kind::min_length`]. Naming the kind at
+/// every call site is the point: checking the master against the unlock floor
+/// would be a one-word mistake with no symptom until somebody needed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     /// The everyday unlock password.
@@ -51,16 +56,40 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// The smallest password the app will accept.
-///
-/// Replaces the .NET rule of "at least 3 characters, letters and digits only",
-/// which accepted `abc` and *rejected* `correct-horse-battery`. Length is the
-/// property that matters; character classes are not restricted at all.
-pub const MIN_LENGTH: usize = 8;
+impl Kind {
+    /// The shortest password this credential accepts.
+    ///
+    /// Character classes are not restricted for either. Length is the property
+    /// that matters, and the .NET rule -- "at least 3 characters, letters and
+    /// digits only" -- managed to accept `abc` while *rejecting*
+    /// `correct-horse-battery`.
+    ///
+    /// The two floors differ because the two credentials are used differently.
+    /// The unlock password is typed at a desk, often many times a day, and four
+    /// characters is what it is deliberately allowed to be. The master password
+    /// is the recovery credential: it is never offered automatically, the prompt
+    /// slows after a *single* wrong attempt rather than three, and it is the one
+    /// that must not be guessable -- so it keeps the longer floor.
+    ///
+    /// What four characters costs, plainly, because it is a real cost and not a
+    /// detail: the stored verifier is Argon2id and cannot be reversed, and the
+    /// prompt throttles, so guessing *at the machine* is slow. But `config.ini`
+    /// is portable by design -- the whole point of the format is that the folder
+    /// can be copied -- and a four-character password in a copied config falls
+    /// to an offline attack quickly. That is an accepted trade for a deterrent
+    /// overlay (§12 of the study), not a claim that it is strong. The master
+    /// password is what stands behind it.
+    pub const fn min_length(self) -> usize {
+        match self {
+            Kind::Password => 4,
+            Kind::Master => 8,
+        }
+    }
+}
 
-/// Whether a proposed password is long enough.
-pub fn is_acceptable(password: &str) -> bool {
-    password.chars().count() >= MIN_LENGTH
+/// Whether a proposed password is long enough for the credential it is for.
+pub fn is_acceptable(kind: Kind, password: &str) -> bool {
+    password.chars().count() >= kind.min_length()
 }
 
 /// Hash a new password into a PHC string for storage.
@@ -213,9 +242,45 @@ mod tests {
 
     #[test]
     fn the_length_floor_accepts_passphrases_the_dotnet_rule_rejected() {
-        assert!(is_acceptable("correct-horse-battery"));
-        assert!(is_acceptable("p@ssw0rd!"));
-        assert!(!is_acceptable("abc"), "the .NET rule accepted this");
-        assert!(!is_acceptable("1234"));
+        for kind in [Kind::Password, Kind::Master] {
+            assert!(is_acceptable(kind, "correct-horse-battery"), "{kind:?}");
+            assert!(is_acceptable(kind, "p@ssw0rd!"), "{kind:?}");
+            // The .NET rule accepted `abc` and rejected the passphrase above.
+            // Neither credential accepts it now.
+            assert!(!is_acceptable(kind, "abc"), "{kind:?}");
+            assert!(!is_acceptable(kind, ""), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn the_unlock_password_may_be_four_characters_and_the_master_may_not() {
+        // The one asymmetry in the policy, and the reason `Kind` exists.
+        assert!(is_acceptable(Kind::Password, "1234"));
+        assert!(!is_acceptable(Kind::Master, "1234"), "the recovery credential keeps the longer floor");
+
+        assert!(!is_acceptable(Kind::Password, "123"), "four is the floor, not a suggestion");
+        assert!(is_acceptable(Kind::Master, "12345678"));
+        assert!(!is_acceptable(Kind::Master, "1234567"));
+    }
+
+    #[test]
+    fn the_floors_are_what_they_are_meant_to_be() {
+        // Pinned, because these are the numbers the UI quotes back to the user
+        // and the ones its messages are written around.
+        assert_eq!(Kind::Password.min_length(), 4);
+        assert_eq!(Kind::Master.min_length(), 8);
+        assert!(
+            Kind::Master.min_length() > Kind::Password.min_length(),
+            "the master password is the recovery credential; it must never be the weaker one"
+        );
+    }
+
+    #[test]
+    fn length_is_counted_in_characters_not_bytes() {
+        // Somebody who types four characters has typed four characters, however
+        // many bytes that took.
+        assert!(is_acceptable(Kind::Password, "\u{1f511}\u{1f512}\u{1f513}\u{1f510}"), "four emoji");
+        assert!(is_acceptable(Kind::Password, "pa\u{df}e"), "four characters, five bytes");
+        assert!(!is_acceptable(Kind::Password, "\u{e9}\u{e9}\u{e9}"), "three characters, six bytes");
     }
 }

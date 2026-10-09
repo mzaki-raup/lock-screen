@@ -441,6 +441,16 @@ Replace the `≥3 characters, letters and digits only` rule from D6 with a real 
 floor and no character-class restriction, so passphrases with symbols are accepted rather than
 rejected.
 
+> **Revised after shipping 0.1.2.** The floor is not one number. The unlock password accepts **4**
+> characters and the master password **8**, because they are used differently: the unlock password is
+> typed at the prompt many times a day, while the master password is a recovery credential that is
+> never offered automatically and is throttled after a single wrong attempt. Both numbers live in
+> `credential::Kind::min_length` and every caller names the kind, so the master cannot be validated
+> against the shorter floor by accident. The cost is stated plainly in that doc comment and in the
+> README: 4 characters resists guessing *at the machine*, where Argon2id and the throttle apply, but
+> not an offline attack on a copied `config.ini` — which the portable design makes easy by
+> construction. The master password is what stands behind that.
+
 ### Unlock precedence
 
 | # | Method | Behaviour | Status |

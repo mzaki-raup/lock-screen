@@ -139,6 +139,13 @@ install's settings. It must never authenticate anyone.
 Unlock ladder: Windows Hello (biometric, then PIN) → app password → voice
 (off by default) → master password, which is never offered automatically.
 
+**The two length floors differ on purpose**: 4 characters for the unlock
+password, 8 for the master. Both live in `credential::Kind::min_length`, and
+every caller names the kind, so the master cannot be checked against the shorter
+floor by accident. Do not "simplify" them back into one number -- the master
+password is the recovery credential and must not be the weaker of the two. No
+UI string hard-codes either value; they are all formatted from `Kind`.
+
 Voice recognition is **speaker-independent**: it recognises the word, not the
 person. It is a convenience that bypasses the password, not a factor. Keep it
 off by default.

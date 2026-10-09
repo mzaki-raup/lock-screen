@@ -10,7 +10,7 @@
 //! abandoned setup leaves the machine exactly as it found it.
 
 use lockscreen_core::config::Config;
-use lockscreen_core::credential;
+use lockscreen_core::credential::{self, Kind};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, GetSysColorBrush, HBRUSH};
 use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
@@ -59,8 +59,15 @@ pub enum Problem {
 impl Problem {
     pub fn message(self) -> String {
         match self {
-            Problem::PasswordTooShort | Problem::MasterTooShort => {
-                format!("Both passwords need at least {} characters.", credential::MIN_LENGTH)
+            // Two messages, because the two floors differ: the unlock password
+            // is typed many times a day, the master password is the recovery
+            // credential. A single message quoting one number would be wrong
+            // for the other field.
+            Problem::PasswordTooShort => {
+                format!("The unlock password needs at least {} characters.", Kind::Password.min_length())
+            }
+            Problem::MasterTooShort => {
+                format!("The master password needs at least {} characters.", Kind::Master.min_length())
             }
             Problem::PasswordsDiffer => "The unlock passwords do not match.".to_owned(),
             Problem::MastersDiffer => "The master passwords do not match.".to_owned(),
@@ -78,13 +85,13 @@ impl Problem {
 /// the controls because the caller has already pulled the text into zeroizing
 /// buffers.
 pub fn validate(password: &str, password_again: &str, master: &str, master_again: &str) -> Result<(), Problem> {
-    if !credential::is_acceptable(password) {
+    if !credential::is_acceptable(Kind::Password, password) {
         return Err(Problem::PasswordTooShort);
     }
     if password != password_again {
         return Err(Problem::PasswordsDiffer);
     }
-    if !credential::is_acceptable(master) {
+    if !credential::is_acceptable(Kind::Master, master) {
         return Err(Problem::MasterTooShort);
     }
     if master != master_again {
@@ -383,11 +390,21 @@ mod tests {
     }
 
     #[test]
-    fn both_passwords_must_be_long_enough() {
-        assert_eq!(validate("short", "short", GOOD_MASTER, GOOD_MASTER), Err(Problem::PasswordTooShort));
-        assert_eq!(validate(GOOD, GOOD, "short", "short"), Err(Problem::MasterTooShort));
-        // The .NET rule accepted three characters, letters and digits only.
-        assert_eq!(validate("abc", "abc", GOOD_MASTER, GOOD_MASTER), Err(Problem::PasswordTooShort));
+    fn each_password_must_clear_its_own_floor() {
+        // The floors differ, and that asymmetry is the policy: four characters
+        // for the password typed at the prompt, eight for the recovery
+        // credential standing behind it.
+        assert_eq!(
+            validate("1234", "1234", GOOD_MASTER, GOOD_MASTER),
+            Ok(()),
+            "four is allowed for the unlock password"
+        );
+        assert_eq!(validate("abc", "abc", GOOD_MASTER, GOOD_MASTER), Err(Problem::PasswordTooShort), "three is not");
+
+        // The same four characters are refused for the master password.
+        assert_eq!(validate(GOOD, GOOD, "1234", "1234"), Err(Problem::MasterTooShort));
+        assert_eq!(validate(GOOD, GOOD, "shortish", "shortish"), Ok(()), "eight clears the master's floor");
+        assert_eq!(validate(GOOD, GOOD, "short", "short"), Err(Problem::MasterTooShort), "seven or fewer does not");
     }
 
     #[test]

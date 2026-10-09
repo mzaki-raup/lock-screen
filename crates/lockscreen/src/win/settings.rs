@@ -20,7 +20,7 @@
 //! needs more than a spoken word.
 
 use lockscreen_core::config::Config;
-use lockscreen_core::credential;
+use lockscreen_core::credential::{self, Kind};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, GetSysColorBrush, HBRUSH};
 use windows::Win32::UI::Controls::BST_CHECKED;
@@ -95,8 +95,14 @@ impl Problem {
             Problem::TitleEmpty => "The lock screen needs a title.".to_owned(),
             Problem::TransparencyNotANumber => "Transparency must be a number, such as 0.5.".to_owned(),
             Problem::TransparencyOutOfRange => "Transparency must be between 0.0 and 1.0.".to_owned(),
-            Problem::PasswordTooShort | Problem::MasterTooShort => {
-                format!("A new password needs at least {} characters.", credential::MIN_LENGTH)
+            // Separate messages: the master password's floor is higher, so one
+            // message quoting a single number would mislead on one of the two
+            // fields.
+            Problem::PasswordTooShort => {
+                format!("A new unlock password needs at least {} characters.", Kind::Password.min_length())
+            }
+            Problem::MasterTooShort => {
+                format!("A new master password needs at least {} characters.", Kind::Master.min_length())
             }
             Problem::PasswordsDiffer => "The new unlock passwords do not match.".to_owned(),
             Problem::MastersDiffer => "The new master passwords do not match.".to_owned(),
@@ -153,7 +159,7 @@ pub fn validate(typed: &Typed<'_>) -> Result<Changes, Problem> {
     }
 
     if changing_password {
-        if !credential::is_acceptable(typed.password) {
+        if !credential::is_acceptable(Kind::Password, typed.password) {
             return Err(Problem::PasswordTooShort);
         }
         if typed.password != typed.password_again {
@@ -161,7 +167,7 @@ pub fn validate(typed: &Typed<'_>) -> Result<Changes, Problem> {
         }
     }
     if changing_master {
-        if !credential::is_acceptable(typed.master) {
+        if !credential::is_acceptable(Kind::Master, typed.master) {
             return Err(Problem::MasterTooShort);
         }
         if typed.master != typed.master_again {
@@ -757,14 +763,46 @@ mod tests {
     #[test]
     fn short_and_mismatched_new_passwords_are_refused() {
         let mut t = typed("Locked", "0.5");
-        t.password = "short";
-        t.password_again = "short";
+        t.password = "abc";
+        t.password_again = "abc";
         assert_eq!(validate(&t), Err(Problem::PasswordTooShort));
 
         let mut t = typed("Locked", "0.5");
         t.password = "a-long-enough-password";
         t.password_again = "a-different-long-one";
         assert_eq!(validate(&t), Err(Problem::PasswordsDiffer));
+    }
+
+    #[test]
+    fn a_four_character_unlock_password_is_allowed_but_not_a_four_character_master() {
+        // Changing only the unlock password, to four characters.
+        let mut t = typed("Locked", "0.5");
+        t.password = "1234";
+        t.password_again = "1234";
+        assert!(validate(&t).is_ok(), "four characters is allowed for the unlock password");
+
+        // The same, for the master password, is not.
+        let mut t = typed("Locked", "0.5");
+        t.master = "1234";
+        t.master_again = "1234";
+        assert_eq!(validate(&t), Err(Problem::MasterTooShort), "the recovery credential keeps the longer floor");
+
+        let mut t = typed("Locked", "0.5");
+        t.master = "shortish";
+        t.master_again = "shortish";
+        assert!(validate(&t).is_ok(), "eight clears it");
+    }
+
+    #[test]
+    fn the_two_messages_quote_the_two_different_floors() {
+        // One message for both would be wrong for one of the fields. The
+        // numbers come from `Kind` rather than being written out here, so this
+        // fails if the message and the rule ever drift apart.
+        let password = Problem::PasswordTooShort.message();
+        let master = Problem::MasterTooShort.message();
+        assert!(password.contains(&Kind::Password.min_length().to_string()), "{password}");
+        assert!(master.contains(&Kind::Master.min_length().to_string()), "{master}");
+        assert_ne!(password, master, "the two floors differ, so the two messages must");
     }
 
     #[test]

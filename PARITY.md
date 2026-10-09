@@ -175,7 +175,10 @@ Sign out and Switch user remain reachable if the overlay misbehaves.
 ### Credentials
 
 12. **The password rung.** A wrong password three times — the fourth attempt should be slowed
-    (`SLOW_AFTER`). *Failure:* no slowing, or a lockout.
+    (`SLOW_AFTER`). *Failure:* no slowing, or a lockout. Also the two length floors, which only the
+    window shows: a 4-character unlock password is accepted, a 4-character master password is
+    refused, and each message quotes **its own** number rather than one shared number. The rules
+    themselves are unit-tested; that the right message reaches the right field is not.
 13. **The master password is never offered on its own.** It has to be asked for. *Failure:* it being
     presented alongside the password, which would make it a second password rather than a recovery
     path.

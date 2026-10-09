@@ -25,9 +25,9 @@ spoken command as a convenience and a master password as a recovery path.
 | Order | Method | Notes |
 | --: | --- | --- |
 | 1 | **Windows Hello** — face, fingerprint, or PIN | Attempted automatically when the prompt appears. Windows chooses the modality and handles its own retry limits. Skipped when Hello is not set up, with no wait. |
-| 2 | **App password** | Shown when Hello is unavailable or you dismiss it. Stored as an Argon2id verifier, never recoverable. Attempts are slowed after three wrong ones. |
+| 2 | **App password** | Shown when Hello is unavailable or you dismiss it. Minimum 4 characters. Stored as an Argon2id verifier, never recoverable. Attempts are slowed after three wrong ones. |
 | 3 | **Voice command** | Off by default. Say your chosen word. A convenience, not a factor — see [Limitations](#limitations). |
-| 4 | **Master password** | Never offered automatically. The button appears only once you are at the password box, and only if a master password is set. Slowed after a single wrong attempt, because a recovery credential should not be a fast oracle. |
+| 4 | **Master password** | Never offered automatically. The button appears only once you are at the password box, and only if a master password is set. Minimum 8 characters. Slowed after a single wrong attempt, because a recovery credential should not be a fast oracle. |
 
 ## First run
 
@@ -37,9 +37,14 @@ There is no default password. Run the app and it asks you to set two:
 LockScreen.exe --setup
 ```
 
-Both must be at least 8 characters, and they must differ. Character classes are not restricted —
-length is the property that matters, and the rule this replaces accepted `abc` while rejecting
-`correct-horse-battery`.
+The unlock password must be at least **4** characters; the master password at least **8**. They must
+differ from each other. Character classes are not restricted for either — length is the property
+that matters, and the rule this replaces accepted `abc` while rejecting `correct-horse-battery`.
+
+The floors differ because the two are used differently. The unlock password is the one typed at the
+prompt, often many times a day. The master password is the recovery credential: never offered
+automatically, slowed after a *single* wrong attempt rather than three, and the one that must not be
+guessable. See [Limitations](#limitations) for what the shorter floor costs.
 
 The master password is **not** your Windows account password, and the app never asks for that. It is
 a second credential of your choosing, for the case where you have forgotten the first.
@@ -188,6 +193,12 @@ Honest ones. The first two are properties of the approach, not bugs to be fixed.
   and so does Task Manager through them.
 - **It is a user-mode process.** Anyone who can run code as your user can end it, and the Task
   Manager policy it sets is an `HKCU` value removable by the same user it restricts.
+- **A four-character unlock password is weak against an *offline* attack.** At the machine it is
+  slow to guess: the stored verifier is Argon2id, and the prompt throttles after three wrong
+  attempts. But `config.ini` is portable by design — the point of the format is that the folder can
+  be copied — and four characters in a copied config falls quickly to an attacker with the file. The
+  master password's eight-character floor is what stands behind it. Use more than four if the folder
+  will ever leave your control.
 - **Voice recognition is speaker-independent.** It recognises the word, not the person — so with it
   enabled, anyone who can speak can unlock the machine. That is why it is off by default, why the
   confidence floor is raised to High, and why it is described above as a convenience rather than a
