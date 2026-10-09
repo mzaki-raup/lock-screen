@@ -1,0 +1,157 @@
+name: Release
+
+# Tag a commit `v2.0.0` and push the tag: this runs the same gates as build.yml,
+# then publishes the program as a release.
+#
+# What it publishes, and what the in-app updater (phase 07) will read:
+#
+#   LockScreen.exe                       the program, downloaded in place
+#   SHA256SUMS.txt                       checked before anything is replaced
+#   LockScreen-<version>-windows-x64.zip for people who update by hand
+#
+# Without SHA256SUMS.txt the app must refuse to install the release by itself,
+# so never publish one of these without the other.
+#
+# As in build.yml, nothing here uses a published action: this instance cannot
+# fetch them from code.forgejo.org (forgejo#2809).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out this tag, with the history the notes need
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Get-ChildItem -Force . | Remove-Item -Recurse -Force
+          git init --quiet --initial-branch=release .
+          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$env:TOKEN"))
+          $auth = "http.extraheader=Authorization: Basic $basic"
+          # Not shallow, and with every tag: the notes below are the commits
+          # since the previous tag.
+          git -c $auth fetch --quiet --tags origin
+          git checkout --quiet --detach ${{ github.sha }}
+          git log --oneline -1
+
+      - name: Use the latest stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+
+      - name: The tag must match the version in Cargo.toml
+        id: version
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          # The version lives in the workspace manifest, under [workspace.package].
+          $inCargo = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value
+          if ($version -ne $inCargo) {
+            # The app compares the published tag against the version it was
+            # built with, so a mismatch would offer the same update for ever.
+            throw "Tag $tag does not match Cargo.toml version $inCargo"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      - name: Tests
+        run: cargo test --locked
+
+      - name: Clippy
+        run: cargo clippy --release --all-targets --locked -- -D warnings
+
+      - name: Build
+        run: cargo build --release --locked
+
+      # Authenticode. The only thing that protects an install against a
+      # compromise of this forge: SHA256SUMS travels the same channel as the
+      # binary, so an attacker who can publish a release can publish both.
+      # Windows checks the publisher at launch however the file arrived.
+      #
+      # Skipped, with a warning in the log, when no certificate is configured --
+      # so a release is still possible before one exists, and it is obvious in
+      # the job output which releases are unsigned.
+      - name: Sign
+        env:
+          CERT_PFX_BASE64: ${{ secrets.CERT_PFX_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          if (-not $env:CERT_PFX_BASE64) {
+            Write-Warning "No signing certificate configured: this release will be UNSIGNED."
+            Write-Warning "Set the CERT_PFX_BASE64 and CERT_PASSWORD secrets to sign it."
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_PFX_BASE64))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw 'signtool.exe not found on the runner' }
+          & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            /f $pfx /p $env:CERT_PASSWORD target/release/LockScreen.exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed with $LASTEXITCODE" }
+          # Remove it from the runner even though the runner is ephemeral.
+          Remove-Item $pfx -Force
+          & $signtool verify /pa /v target/release/LockScreen.exe
+
+      - name: Checksums and archive
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/LockScreen.exe dist/
+          Copy-Item README.md dist/
+          $zip = "LockScreen-${{ steps.version.outputs.version }}-windows-x64.zip"
+          Compress-Archive -Path dist/LockScreen.exe, dist/README.md -DestinationPath "dist/$zip"
+          Remove-Item dist/README.md
+          # `sha256sum` layout, which the updater parses.
+          Get-ChildItem dist -File | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Release notes from the commits since the last tag
+        run: |
+          $previous = git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>$null
+          $range = if ($previous) { "$previous..${{ github.ref_name }}" } else { "${{ github.ref_name }}" }
+          $log = git log --no-merges --pretty=format:"- %s" $range
+          $notes = if ($log) { $log -join "`n" } else { "No changes recorded." }
+          $notes | Set-Content notes.md -Encoding utf8
+          Get-Content notes.md
+
+      - name: Publish the release
+        env:
+          # Forgejo hands the workflow a token with write access to this
+          # repository; the API below is its /api/v1, not GitHub's. Who the
+          # release is shown as coming from does not depend on this token: the
+          # forge matches the tag's own author email to an account, so a tag
+          # made with an email that account does not own is published by
+          # "Ghost".
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $api = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
+          $headers = @{ Authorization = "token $env:TOKEN" }
+          $body = @{
+            tag_name   = "${{ github.ref_name }}"
+            name       = "Lock Screen ${{ steps.version.outputs.version }}"
+            body       = (Get-Content notes.md -Raw)
+            draft      = $false
+            prerelease = $false
+          } | ConvertTo-Json
+          $release = Invoke-RestMethod -Method Post -Uri "$api/releases" -Headers $headers `
+            -ContentType 'application/json' -Body $body
+          Write-Host "Release $($release.id) created at $($release.html_url)"
+          foreach ($file in Get-ChildItem dist -File) {
+            $uri = "$api/releases/$($release.id)/assets?name=$([uri]::EscapeDataString($file.Name))"
+            Invoke-RestMethod -Method Post -Uri $uri -Headers $headers -Form @{ attachment = Get-Item $file.FullName } | Out-Null
+            Write-Host "Attached $($file.Name)"
+          }

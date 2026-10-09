@@ -1,0 +1,62 @@
+[workspace]
+resolver = "3"
+members = ["crates/lockscreen", "crates/lockscreen-core"]
+
+# One version for the whole workspace. The release workflow checks the tag
+# against this value, and `build.rs` turns it into the VERSIONINFO resource, so
+# it is the single place a release version is written.
+#
+# 0.x while the port is incomplete. It becomes 2.0.0 at the first release that
+# replaces the .NET app, which shipped as 1.1.1.0 -- claiming 2.0.0 before the
+# overlay exists would overstate what the binary does.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Mohd Zaki Raup"]
+description = "Configurable lock screen overlay for Windows"
+publish = false
+
+[workspace.dependencies]
+argon2 = { version = "0.6", features = ["password-hash"] }
+rust-ini = "0.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+windows-collections = "0.3"
+windows-future = "0.3"
+zeroize = { version = "1", features = ["derive"] }
+
+# Features listed explicitly and alphabetically, as the sibling does: the
+# `windows` crate is enormous and an unexplained feature is a compile-time cost
+# nobody can account for later.
+[workspace.dependencies.windows]
+version = "0.62"
+features = [
+  "Foundation",                       # TimeSpan, AsyncStatus
+  "Globalization",                    # the speech recogniser's language
+  "Media_SpeechRecognition",          # voice unlock
+  "Security_Credentials_UI",          # Windows Hello: biometric, PIN
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",               # backdrop blur (D1)
+  "Win32_Graphics_Gdi",               # system colours, fonts, monitor info
+  "Win32_Networking_WinHttp",         # the update check and download
+  "Win32_Security_Cryptography",      # DPAPI, to read .NET configs
+  "Win32_System_Console",             # AttachConsole for --version / --help
+  "Win32_System_Diagnostics_Debug",   # MessageBeep
+  "Win32_System_LibraryLoader",       # GetModuleFileNameW: the portable path
+  "Win32_System_Registry",            # DisableTaskMgr policy
+  "Win32_System_SystemInformation",   # GetLocalTime, for log timestamps
+  "Win32_System_Threading",           # CreateMutexW: the single-instance guard
+  "Win32_System_WinRT",               # IUserConsentVerifierInterop
+  "Win32_UI_Controls",                # MARGINS, for the backdrop
+  "Win32_UI_Shell",                   # ShellExecuteW, to open a release page
+  "Win32_UI_HiDpi",                   # per-monitor DPI
+  "Win32_UI_Input_KeyboardAndMouse",  # SetFocus, EnableWindow
+  "Win32_UI_WindowsAndMessaging",
+]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

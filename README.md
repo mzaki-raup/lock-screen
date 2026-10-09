@@ -45,7 +45,8 @@ the per-user policy that disables Task Manager. Both are undone on unlock.
 
 ```bash
 dotnet restore
-dotnet build LockScreenSolution.sln
+dotnet build LockScreenApp/LockScreenApp.csproj
+dotnet build SettingsApp/SettingsApp.csproj
 ```
 
 Run either app:
@@ -117,9 +118,11 @@ These are real and worth knowing before you rely on the app. Each is analysed in
   serious item here, and it means the overlay can be reset by anyone who reaches the desktop.
 - **"Enable Blur" does nothing** (D1). The blur is applied to the overlay's own flat colour rather
   than to the desktop behind it, which is a no-op.
-- **The overlay can leave gaps on mixed-DPI setups** (D2). Monitor bounds are read in physical
-  pixels and applied as device-independent units, and no DPI awareness is declared, so a scaled
-  monitor may not be fully covered.
+- **The overlay is mis-sized on mixed-DPI setups** (D2). No DPI awareness is declared anywhere, so
+  Windows virtualises every coordinate the app reads: on a 150%-scaled monitor it reads 1280x720
+  where the screen is 1920x1080. The overlay is built in those units and stretched back up, which
+  makes it and the password prompt soft; whether it also leaves an uncovered edge has not been
+  confirmed on screen. Measured in `PARITY.md` §2.
 - **Voice unlock accepts medium-confidence matches** at the default threshold, and speech
   recognition is speaker-independent — so with it enabled, anyone standing at the machine can say
   "unlock" and get in without a password. It is off by default. Leave it off unless you have
@@ -139,7 +142,16 @@ Windows API the current app depends on has been verified callable from Rust, and
 get fixed as part of the rewrite.
 
 The port is **properly portable**: `config.ini` resolves against the executable's own folder via
-`GetModuleFileNameW`, so it no longer matters where the app is launched from. Nothing is written to
+`GetModuleFileNameW`, so it no longer matters where the app is launched from. Everything it writes
+sits beside the exe:
+
+```
+LockScreen.exe
+config.ini            your settings
+LockScreenData/       logs and update downloads - derived, safe to delete
+```
+
+ Nothing is written to
 `%APPDATA%` or `%LOCALAPPDATA%`, there is no installer, and a copy of the folder carries its settings
 with it — which works because the password becomes an Argon2id hash rather than a DPAPI blob tied to
 one user on one machine. The supported floor stays **Windows 10 build 17763 (1809) and later**,

@@ -1,0 +1,60 @@
+name: Build
+
+# The four gates, on every push and pull request. The same four a developer runs
+# locally, so a change that passes there passes here.
+#
+# Nothing below uses a published action: this Forgejo instance cannot fetch them
+# from code.forgejo.org (forgejo#2809), so even the checkout is done by hand.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - name: Check out this commit
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Get-ChildItem -Force . | Remove-Item -Recurse -Force
+          git init --quiet --initial-branch=ci .
+          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$env:TOKEN"))
+          git -c "http.extraheader=Authorization: Basic $basic" fetch --quiet --depth=1 origin ${{ github.sha }}
+          git checkout --quiet --detach FETCH_HEAD
+          git log --oneline -1
+
+      - name: Use the latest stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      - name: Tests
+        run: cargo test --locked
+
+      # -D warnings, so a warning fails the build rather than scrolling past.
+      - name: Clippy
+        run: cargo clippy --release --all-targets --locked -- -D warnings
+
+      - name: Build
+        run: cargo build --release --locked
+
+      # The binary is the product, so its size is worth watching: the whole
+      # argument for raw Win32 over a GUI toolkit was ~500 KB against ~10 MB,
+      # and a regression there should be visible in the log rather than
+      # discovered at release time.
+      - name: Size
+        run: |
+          $exe = Get-Item target/release/LockScreen.exe
+          "LockScreen.exe {0:N0} bytes ({1:N0} KB)" -f $exe.Length, ($exe.Length / 1KB)
