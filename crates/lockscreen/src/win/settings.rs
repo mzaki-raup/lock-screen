@@ -27,17 +27,18 @@ use windows::Win32::UI::Controls::BST_CHECKED;
 use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::{
-    BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON, BS_PUSHBUTTON, CreateWindowExW, DefWindowProcW,
-    DestroyWindow, DispatchMessageW, GetMessageW, IDCANCEL, IDOK, IsDialogMessageW, MSG, PostQuitMessage,
-    RegisterClassW, SW_SHOW, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowPos, ShowWindow,
-    TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
-    WS_CLIPCHILDREN, WS_EX_DLGMODALFRAME, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_AUTORADIOBUTTON, BS_DEFPUSHBUTTON, BS_PUSHBUTTON, CreateWindowExW,
+    DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, IDCANCEL, IDOK, IsDialogMessageW, MSG,
+    PostQuitMessage, RegisterClassW, SW_SHOW, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowPos,
+    ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WNDCLASSW, WS_BORDER,
+    WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_EX_DLGMODALFRAME, WS_GROUP, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 use windows::core::PCWSTR;
 use zeroize::Zeroizing;
 
 use lockscreen_core::release;
 
+use super::voice::Confidence;
 use super::{ui, update, voice};
 
 const ID_TITLE: u16 = 30;
@@ -50,6 +51,12 @@ const ID_PASSWORD_AGAIN: u16 = 36;
 const ID_MASTER: u16 = 37;
 const ID_MASTER_AGAIN: u16 = 38;
 const ID_UPDATE: u16 = 39;
+// The three required-match levels. One row, three buttons: `voice::required_level`
+// buckets the stored float into exactly these, so offering the number instead
+// would invite tuning a value that rounds to one of them anyway.
+const ID_CONFIDENCE_HIGH: u16 = 40;
+const ID_CONFIDENCE_MEDIUM: u16 = 41;
+const ID_CONFIDENCE_LOW: u16 = 42;
 
 /// What the user changed. Password fields left blank mean "leave it alone", so
 /// the hashes are `Option`.
@@ -59,6 +66,7 @@ pub struct Changes {
     pub transparency: f64,
     pub blur_background: bool,
     pub voice_enabled: bool,
+    pub voice_confidence_threshold: f64,
     pub password_hash: Option<String>,
     pub master_hash: Option<String>,
 }
@@ -125,6 +133,9 @@ pub struct Typed<'a> {
     pub transparency: &'a str,
     pub blur_background: bool,
     pub voice_enabled: bool,
+    /// How sure the recogniser has to be. A level rather than the stored float:
+    /// see [`voice::threshold_for`].
+    pub voice_confidence: Confidence,
     pub password: &'a str,
     pub password_again: &'a str,
     pub master: &'a str,
@@ -191,6 +202,7 @@ pub fn validate(typed: &Typed<'_>) -> Result<Changes, Problem> {
         transparency,
         blur_background: typed.blur_background,
         voice_enabled: typed.voice_enabled,
+        voice_confidence_threshold: voice::threshold_for(typed.voice_confidence),
         password_hash: hash(changing_password, typed.password)?,
         master_hash: hash(changing_master, typed.master)?,
     })
@@ -202,6 +214,7 @@ pub fn apply(mut config: Config, changes: Changes) -> Config {
     config.transparency = changes.transparency;
     config.blur_background = changes.blur_background;
     config.voice.enabled = changes.voice_enabled;
+    config.voice.confidence_threshold = changes.voice_confidence_threshold;
     if let Some(hash) = changes.password_hash {
         config.password_hash = Some(hash);
     }
@@ -216,6 +229,8 @@ struct State {
     transparency: HWND,
     blur: HWND,
     voice_enabled: HWND,
+    /// The three required-match buttons, in the order High, Medium, Low.
+    confidence: [HWND; 3],
     test_mic: HWND,
     password: HWND,
     password_again: HWND,
@@ -353,6 +368,21 @@ pub fn edit(config: &Config) -> Option<Changes> {
     );
     y += s(32) + gap;
 
+    // One row, because the window is already tall and on a 150%-scaled monitor
+    // every row costs half again as much. The explanation lives where it is
+    // actually needed -- the prompt says, when a match is refused, what was
+    // heard and what was required -- rather than as a paragraph here that
+    // nobody reads until it is too late.
+    let radio = |id: u16, label: &str, first: bool, column: i32| {
+        let st = WS_TABSTOP | WINDOW_STYLE(BS_AUTORADIOBUTTON as u32) | if first { WS_GROUP } else { WINDOW_STYLE(0) };
+        add(id, "BUTTON", label, st, (pad + s(150) + column * s(84), y, s(84), row_h))
+    };
+    add(0, "STATIC", "Required match", ui::SS_LABEL, (pad, y + s(4), s(150), label_h));
+    let confidence_high = radio(ID_CONFIDENCE_HIGH, "High", true, 0);
+    let confidence_medium = radio(ID_CONFIDENCE_MEDIUM, "Medium", false, 1);
+    let confidence_low = radio(ID_CONFIDENCE_LOW, "Low", false, 2);
+    y += row_h + gap;
+
     let test_mic = add(ID_TEST_MIC, "BUTTON", "Test microphone", WS_TABSTOP, (pad, y, s(150), button_h));
     y += button_h + gap * 2;
 
@@ -427,12 +457,21 @@ pub fn edit(config: &Config) -> Option<Changes> {
     set_checked(blur, config.blur_background);
     set_checked(voice_enabled, config.voice.enabled);
 
+    // Whatever is in the file, shown as one of the three levels it actually
+    // means. A hand-edited 0.55 therefore opens as "medium", which is what it
+    // has always behaved as.
+    let level = voice::required_level(config.voice.confidence_threshold);
+    set_checked(confidence_high, level == Confidence::High);
+    set_checked(confidence_medium, level == Confidence::Medium);
+    set_checked(confidence_low, level <= Confidence::Low);
+
     STATE.with(|st| {
         *st.borrow_mut() = Some(State {
             title,
             transparency,
             blur,
             voice_enabled,
+            confidence: [confidence_high, confidence_medium, confidence_low],
             test_mic,
             password,
             password_again,
@@ -485,6 +524,20 @@ pub fn edit(config: &Config) -> Option<Changes> {
     STATE.with(|st| st.borrow_mut().take()).and_then(|s| s.done).flatten()
 }
 
+/// Which required-match button is set, in the order High, Medium, Low.
+///
+/// Falls back to `High` rather than guessing, because a group where somehow
+/// none is set must not quietly become the weakest setting -- that would turn a
+/// display glitch into a security change.
+fn chosen_confidence(buttons: [HWND; 3]) -> Confidence {
+    for (button, level) in buttons.into_iter().zip([Confidence::High, Confidence::Medium, Confidence::Low]) {
+        if checked(button) {
+            return level;
+        }
+    }
+    Confidence::High
+}
+
 fn set_status(text: &str) {
     STATE.with(|st| {
         if let Some(state) = st.borrow().as_ref() {
@@ -494,7 +547,7 @@ fn set_status(text: &str) {
 }
 
 fn attempt_save() {
-    let (title, transparency, blur, voice, p1, p2, m1, m2) = STATE.with(|st| {
+    let (title, transparency, blur, voice, confidence, p1, p2, m1, m2) = STATE.with(|st| {
         let state = st.borrow();
         let state = state.as_ref().expect("state is present while the window is up");
         (
@@ -502,6 +555,7 @@ fn attempt_save() {
             ui::get_text(state.transparency),
             checked(state.blur),
             checked(state.voice_enabled),
+            chosen_confidence(state.confidence),
             Zeroizing::new(ui::get_text(state.password)),
             Zeroizing::new(ui::get_text(state.password_again)),
             Zeroizing::new(ui::get_text(state.master)),
@@ -514,6 +568,7 @@ fn attempt_save() {
         transparency: &transparency,
         blur_background: blur,
         voice_enabled: voice,
+        voice_confidence: confidence,
         password: &p1,
         password_again: &p2,
         master: &m1,
@@ -687,11 +742,49 @@ mod tests {
             transparency,
             blur_background: false,
             voice_enabled: false,
+            voice_confidence: Confidence::High,
             password: "",
             password_again: "",
             master: "",
             master_again: "",
         }
+    }
+
+    #[test]
+    fn the_chosen_required_match_is_what_gets_stored() {
+        // The float is what lands in config.ini, so the three levels have to
+        // arrive there as the values the rest of the app reads back.
+        for (level, expected) in [(Confidence::High, 1.0), (Confidence::Medium, 0.7), (Confidence::Low, 0.4)] {
+            let mut t = typed("Locked", "0.5");
+            t.voice_confidence = level;
+            let changes = validate(&t).expect("valid");
+            assert_eq!(changes.voice_confidence_threshold, expected, "{level:?}");
+
+            let updated = apply(Config::default(), changes);
+            assert_eq!(updated.voice.confidence_threshold, expected, "{level:?}");
+            // And it means the same thing when read back as when chosen.
+            assert_eq!(voice::required_level(updated.voice.confidence_threshold), level, "{level:?}");
+        }
+    }
+
+    #[test]
+    fn saving_without_touching_the_voice_row_does_not_move_the_threshold() {
+        // The row is read on every save, so a config at medium must not drift
+        // to the default just because somebody renamed the title.
+        let mut original = Config::default();
+        original.voice.confidence_threshold = 0.7;
+        let mut t = typed("Renamed", "0.5");
+        t.voice_confidence = voice::required_level(original.voice.confidence_threshold);
+        let updated = apply(original, validate(&t).expect("valid"));
+        assert_eq!(updated.voice.confidence_threshold, 0.7);
+    }
+
+    #[test]
+    fn a_group_with_nothing_checked_falls_back_to_the_strictest_level() {
+        // Null handles stand in for a group that somehow has no button set.
+        // The fallback must be High: a display glitch quietly becoming the
+        // weakest setting would turn a cosmetic fault into a security change.
+        assert_eq!(chosen_confidence([HWND::default(); 3]), Confidence::High);
     }
 
     #[test]

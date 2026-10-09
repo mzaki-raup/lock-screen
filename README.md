@@ -125,7 +125,7 @@ ListeningTimeout = 10
 | `BlurBackground` | Blurs the desktop behind the overlay, on **Windows 11 22H2 and later**. The overlay is built one of two ways depending on this — a layered window has no surface for the compositor to blur — and `Transparency` applies either way: as the window's alpha when blur is off, and as the tint painted over the backdrop when it is on. Where the backdrop API is unavailable it degrades to plain translucency and the setting reports itself as unavailable. |
 | `PasswordHash`, `MasterHash` | Argon2id verifiers with independent random salts, so rotating one does not invalidate the other. Not reversible, not comparable by eye, and useless to anyone who copies the file. |
 | `UnlockCommand` | The word to listen for. Lower-cased on read. |
-| `ConfidenceThreshold` | `0.0`–`1.0`, mapping onto WinRT's Low (0.4) / Medium (0.7) / High (1.0). Defaults to `1.00`, which admits **high confidence only**. The settings window does not expose this; edit the file. |
+| `ConfidenceThreshold` | `0.0`–`1.0`, mapping onto WinRT's Low (0.4) / Medium (0.7) / High (1.0). Defaults to `1.00`, which admits **high confidence only**. Settings calls this *Required match* and offers the three levels; anything in between rounds to one of them, which is all it has ever meant. |
 | `ListeningTimeout` | Seconds to listen before giving up |
 
 Out-of-range values are clamped rather than rejected, so a hand-edited file still opens the lock
@@ -137,20 +137,18 @@ That is `ConfidenceThreshold` doing its job, and the default is strict on purpos
 a name, an invented string — is matched by the recogniser but rarely with *high* confidence**, which
 is all the default `1.00` accepts. Ordinary dictionary words reach it far more often.
 
-Two ways out, and they are not equivalent:
+Two ways out, and they are not equivalent.
 
-```ini
-[VoiceRecognition]
-ConfidenceThreshold = 0.70
-```
+**Lower the bar.** Settings → *Required match* → **Medium**. That accepts a medium-confidence match,
+which is what the .NET version did by default and what §7 of the study calls a defect: a
+medium-confidence *guess* at the word unlocks the screen. Choose it only if you accept that.
 
-That accepts a medium-confidence match, which is what the .NET version did by default and what §7 of
-the study calls a defect: a medium-confidence *guess* at the word unlocks the screen. Lower it only
-if you accept that. The alternative is to choose a command the recogniser is confident about — a
-real word, or two words together — and leave the threshold where it is.
+**Or pick a word the recogniser is sure of** — a real word, or two words together — and leave
+*Required match* on High. A made-up word is matched but rarely with high confidence; a dictionary
+word clears it far more often.
 
 Either way, remember what voice unlock is: speaker-independent, so it recognises the word and not
-you.
+you. Lowering the bar lowers it for everyone within earshot.
 
 ### Coming from the .NET version
 

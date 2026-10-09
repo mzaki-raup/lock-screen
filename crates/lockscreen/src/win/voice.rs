@@ -86,6 +86,28 @@ pub fn required_level(threshold: f64) -> Confidence {
     }
 }
 
+/// The threshold to store for a required level: the inverse of
+/// [`required_level`].
+///
+/// Settings offers the three levels rather than the number, because the number
+/// has never meant anything finer -- `required_level` buckets it -- and a box
+/// accepting `0.55` would invite somebody to tune a value that rounds to
+/// "medium" anyway. The float is still what lands in `config.ini`, so a config
+/// written here stays readable by the .NET app and by anything that expects the
+/// old key.
+///
+/// Round-tripping is a test, not an assumption: `required_level(threshold_for(l))
+/// == l` for every level.
+pub fn threshold_for(level: Confidence) -> f64 {
+    match level {
+        Confidence::High => 1.0,
+        Confidence::Medium => 0.7,
+        // There is no "rejected" to offer: it would admit a match the
+        // recogniser itself threw out.
+        Confidence::Low | Confidence::Rejected => 0.4,
+    }
+}
+
 /// What a listen attempt produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -123,7 +145,7 @@ impl Outcome {
                 format!("Heard \u{201c}{heard}\u{201d}, which is not the unlock command.")
             }
             Outcome::Unsure { confidence, required } => format!(
-                "Heard the command, but with {} confidence when {} is required.                  Try again more clearly, or lower ConfidenceThreshold in config.ini.",
+                "Heard the command, but with {} confidence when {} is required.                  Try again more clearly, or lower the required match in settings.",
                 confidence.name(),
                 required.name()
             ),
@@ -272,9 +294,8 @@ mod tests {
         let message = unsure.message();
         assert!(message.contains("Heard the command"), "{message}");
         assert!(!message.contains("not the unlock command"), "that is the misleading wording: {message}");
-        // And it has to say what to do, since the threshold is not exposed in
-        // the settings window.
-        assert!(message.contains("ConfidenceThreshold"), "{message}");
+        // And it has to say what to do about it.
+        assert!(message.contains("settings"), "it has to say where to change it: {message}");
         assert!(message.contains("medium") && message.contains("high"), "both levels should be named: {message}");
     }
 
@@ -293,6 +314,28 @@ mod tests {
             assert!(!name.is_empty(), "{level:?}");
             assert_eq!(name, name.to_lowercase(), "it appears mid-sentence: {name}");
         }
+    }
+
+    #[test]
+    fn every_offered_level_round_trips_through_the_stored_float() {
+        // Settings stores a float and reads back a level. If these disagreed,
+        // choosing "medium" and saving would show "high" the next time the
+        // window opened -- a setting that silently refuses to stick.
+        for level in [Confidence::Low, Confidence::Medium, Confidence::High] {
+            assert_eq!(required_level(threshold_for(level)), level, "{level:?} did not survive the round trip");
+        }
+        // Not offered in the UI, and floored rather than trusted: admitting a
+        // rejection would unlock on a match the recogniser threw out.
+        assert_eq!(required_level(threshold_for(Confidence::Rejected)), Confidence::Low);
+    }
+
+    #[test]
+    fn the_stored_floats_are_the_ones_the_dotnet_app_wrote() {
+        // Compatibility, not decoration: a config written here has to keep
+        // meaning the same thing to anything that reads the old key.
+        assert_eq!(threshold_for(Confidence::High), 1.0);
+        assert_eq!(threshold_for(Confidence::Medium), 0.7);
+        assert_eq!(threshold_for(Confidence::Low), 0.4);
     }
 
     #[test]
