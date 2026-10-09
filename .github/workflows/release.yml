@@ -14,6 +14,16 @@ name: Release
 #
 # As in build.yml, nothing here uses a published action: this instance cannot
 # fetch them from code.forgejo.org (forgejo#2809).
+#
+# **Push the tag on its own**, after the branch has landed:
+#
+#   git push origin main
+#   git push origin v2.0.0
+#
+# Pushing both in one command raises two events at once, and the forge has been
+# seen to end up without its own row for the tag -- which fails the publish step
+# below after every expensive step has already passed. The `target_commitish`
+# there now survives that, but one ref per push is still the habit.
 on:
   push:
     tags: ['v*']
@@ -140,12 +150,22 @@ jobs:
         run: |
           $api = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
           $headers = @{ Authorization = "token $env:TOKEN" }
+          # `target_commitish` is not optional in practice, even though the
+          # tag always exists in git by the time this runs. Forgejo keeps its
+          # own row per tag, and when a branch and a tag arrive in the same
+          # `git push` that row can be missing while `/tags` still lists the
+          # tag -- at which point this POST is refused with
+          # "Release is has no Tag" after the build has already succeeded.
+          # Naming the commit lets the forge attach the release itself instead
+          # of depending on that row. See the header comment: push the tag as
+          # its own push, too.
           $body = @{
-            tag_name   = "${{ github.ref_name }}"
-            name       = "Lock Screen ${{ steps.version.outputs.version }}"
-            body       = (Get-Content notes.md -Raw)
-            draft      = $false
-            prerelease = $false
+            tag_name         = "${{ github.ref_name }}"
+            target_commitish = "${{ github.sha }}"
+            name             = "Lock Screen ${{ steps.version.outputs.version }}"
+            body             = (Get-Content notes.md -Raw)
+            draft            = $false
+            prerelease       = $false
           } | ConvertTo-Json
           $release = Invoke-RestMethod -Method Post -Uri "$api/releases" -Headers $headers `
             -ContentType 'application/json' -Body $body
