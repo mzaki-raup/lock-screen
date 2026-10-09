@@ -145,7 +145,7 @@ impl Outcome {
                 format!("Heard \u{201c}{heard}\u{201d}, which is not the unlock command.")
             }
             Outcome::Unsure { confidence, required } => format!(
-                "Heard the command, but with {} confidence when {} is required.                  Try again more clearly, or lower the required match in settings.",
+                "Heard the command, but with {} confidence when {} is required. Try again, or lower the required match in settings.",
                 confidence.name(),
                 required.name()
             ),
@@ -415,11 +415,20 @@ mod tests {
             Outcome::Unavailable,
             Outcome::Rejected { heard: String::new(), confidence: Confidence::Low },
             Outcome::Rejected { heard: "unlog".into(), confidence: Confidence::Medium },
+            // Absent from this list until 0.2.3, which is exactly why a
+            // mangled message shipped in it.
+            Outcome::Unsure { confidence: Confidence::Medium, required: Confidence::High },
         ];
         for outcome in &outcomes {
             let message = outcome.message();
             assert!(!message.is_empty(), "{outcome:?}");
             assert!(message.ends_with('.'), "{outcome:?}: {message}");
+            // A run of spaces mid-sentence means a line continuation was
+            // flattened on the way into the source. That reached a user as
+            // "is required.                  Try again", so it is asserted
+            // against rather than left to review.
+            assert!(!message.contains("  "), "{outcome:?} has a run of spaces: {message:?}");
+            assert_eq!(message.lines().count(), 1, "{outcome:?} spans lines: {message:?}");
         }
         // What was heard is shown back so a near-miss is obvious, but an empty
         // result must not produce empty quotes.

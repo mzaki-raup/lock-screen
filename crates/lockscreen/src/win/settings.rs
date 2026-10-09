@@ -960,6 +960,11 @@ mod tests {
             let message = problem.message();
             assert!(message.ends_with('.'), "{problem:?}: {message}");
             assert_eq!(message, message.trim(), "{problem:?}: stray whitespace");
+            // A run of spaces mid-sentence means a line continuation was
+            // flattened on the way into the source. One shipped in 0.2.3, so
+            // every message that reaches a user is asserted against it.
+            assert!(!message.contains("  "), "{problem:?} has a run of spaces: {message:?}");
+            assert_eq!(message.lines().count(), 1, "{problem:?} spans lines: {message:?}");
         }
     }
 }

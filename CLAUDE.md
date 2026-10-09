@@ -126,6 +126,24 @@ Learned the hard way; each cost real time.
   explicit negation or it is silently left out of the commit.
 - **Low-level hooks must be fast.** Windows removes a hook whose callback
   overruns `LowLevelHooksTimeout`. Set a flag and return.
+- **A backslash does not survive being written through a shell heredoc into a
+  Python string literal.** It collapses before Python sees it, and Python then
+  treats the bare backslash as its *own* line continuation -- so a Rust string
+  continuation written that way arrives as one long line with the indentation
+  baked in as literal spaces. That shipped in 0.2.3 and reached a user as
+  `is required.                  Try again`. The same edit then broke `'
+'`
+  into a real newline and failed to compile.
+
+  Write Rust fragments with `cat > file.frag <<'EOF'`, which preserves the text
+  exactly, and insert the file's contents -- or use the Write tool. Never put a
+  backslash in a Python literal destined for a source file; `chr(10)` and
+  `.lines().count()` get the job done without one.
+
+  The backstop is a test: every user-facing message in `voice`, `hello`, `setup`
+  and `settings` asserts it contains no double space and spans no lines. Keep
+  new messages in those lists -- the bug shipped because `Outcome::Unsure` was
+  missing from one.
 
 ## Releases
 

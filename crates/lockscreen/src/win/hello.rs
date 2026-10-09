@@ -136,6 +136,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_outcome_has_a_message_fit_to_show_at_a_locked_screen() {
+        for outcome in [
+            Outcome::Verified,
+            Outcome::Declined,
+            Outcome::Busy,
+            Outcome::Unavailable,
+            Outcome::Failed(windows::core::HRESULT(-1)),
+        ] {
+            let message = outcome.message();
+            assert!(message.ends_with('.'), "{outcome:?}: {message}");
+            // Same guard as the other windows: a flattened line continuation
+            // reached a user once, in the voice module.
+            assert!(!message.contains("  "), "{outcome:?} has a run of spaces: {message:?}");
+            assert_eq!(message.lines().count(), 1, "{outcome:?} spans lines: {message:?}");
+        }
+        // The one case that must not suggest retrying, since retrying cannot
+        // help, is also the one that must not mention an HRESULT at somebody
+        // standing at a locked machine.
+        assert!(!Outcome::Failed(windows::core::HRESULT(-1)).message().contains("0x"));
+    }
+
+    #[test]
     fn every_verification_result_maps_to_an_outcome() {
         assert_eq!(Outcome::from(UserConsentVerificationResult::Verified), Outcome::Verified);
         assert_eq!(Outcome::from(UserConsentVerificationResult::Canceled), Outcome::Declined);
