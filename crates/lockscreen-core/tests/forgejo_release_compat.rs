@@ -3,8 +3,8 @@
 //! `tests/fixtures/forgejo-releases.json` was not written by hand. It is the
 //! verbatim response from
 //! `https://git.zacx.net/api/v1/repos/owner/lock-screen/releases?limit=10`
-//! after the first release was published by `.github/workflows/release.yml` --
-//! the same URL, with the same query, that `win::update` fetches at runtime.
+//! with two releases published -- the same URL, with the same query, that
+//! `win::update` fetches at runtime.
 //!
 //! It exists because the unit tests in `release.rs` feed the parser JSON the
 //! parser's author wrote. That proves the logic and proves nothing about the
@@ -14,6 +14,10 @@
 //! are Forgejo's, not ours, and this is the only test that reads them as they
 //! actually arrive.
 //!
+//! Two releases rather than one, deliberately. With a single release there is
+//! no difference between "pick the newest" and "pick the first", so the
+//! selection could be wrong in a way nothing here would show.
+//!
 //! Kept verbatim, including the fields the parser ignores. Trimming it to what
 //! is used today would throw away the thing being tested -- that a response
 //! carrying more than we ask for still reads correctly.
@@ -21,6 +25,11 @@
 use std::path::PathBuf;
 
 use lockscreen_core::release::{self, EXE_ASSET, SUMS_ASSET, Version};
+
+/// The newest and the oldest release in the fixture. Named once: when the
+/// fixture is regenerated after another release, only these change.
+const NEWEST: Version = Version { major: 0, minor: 1, patch: 2 };
+const OLDEST: Version = Version { major: 0, minor: 1, patch: 0 };
 
 fn fixture() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/forgejo-releases.json");
@@ -42,15 +51,20 @@ fn the_fixture_still_carries_the_field_names_that_make_it_worth_having() {
     }
     assert!(json.contains(EXE_ASSET), "the release must carry {EXE_ASSET}");
     assert!(json.contains(SUMS_ASSET), "and {SUMS_ASSET}, or it would not be installable");
+
+    let releases: Vec<serde_json::Value> = serde_json::from_str(&json).expect("the fixture should be JSON");
+    assert!(releases.len() >= 2, "two releases are the point of this fixture; see the module comment");
 }
 
 #[test]
-fn an_older_copy_is_offered_the_published_release() {
-    // The case that matters: a real release, read by the real parser.
-    let update = release::newer_than(&fixture(), v(0, 0, 9)).expect("0.0.9 should be offered the published release");
+fn an_older_copy_is_offered_the_newest_published_release() {
+    // The case that matters: a real response, read by the real parser. And with
+    // two releases in it, the version asserted below is only right if the
+    // newest was chosen rather than the first or the last.
+    let update = release::newer_than(&fixture(), v(0, 0, 9)).expect("0.0.9 should be offered an update");
 
-    assert_eq!(update.version, v(0, 1, 0));
-    assert_eq!(update.tag, "v0.1.0");
+    assert_eq!(update.version, NEWEST);
+    assert_eq!(update.tag, format!("v{}.{}.{}", NEWEST.major, NEWEST.minor, NEWEST.patch));
     assert!(update.page.starts_with("https://"), "{}", update.page);
 
     assert_eq!(update.exe.name, EXE_ASSET);
@@ -71,24 +85,49 @@ fn an_older_copy_is_offered_the_published_release() {
 }
 
 #[test]
-fn the_published_version_itself_is_not_offered_an_update() {
+fn a_copy_on_the_older_release_is_offered_the_newer_one() {
+    // Somebody who installed the first release and has not updated since --
+    // the ordinary case this feature exists for.
+    let update = release::newer_than(&fixture(), OLDEST).expect("the older release should be offered the newer");
+    assert_eq!(update.version, NEWEST);
+}
+
+#[test]
+fn the_newest_published_version_is_not_offered_an_update() {
     // "Up to date" and "the check failed" are different answers, and this is
     // the first: a well-formed response with nothing newer in it.
-    assert_eq!(
-        release::newer_than(&fixture(), v(0, 1, 0)),
-        None,
-        "a copy on the newest release has nothing to install"
-    );
+    assert_eq!(release::newer_than(&fixture(), NEWEST), None, "a copy on the newest release has nothing to install");
 }
 
 #[test]
 fn a_newer_copy_is_never_walked_backwards() {
     // The downgrade protection, against a real response. Somebody running a
     // build newer than anything published -- a developer, or someone who was
-    // given a fix early -- must not be offered the older release.
-    assert_eq!(release::newer_than(&fixture(), v(0, 1, 1)), None, "0.1.1 must not be offered 0.1.0");
+    // given a fix early -- must not be offered an older release.
+    assert_eq!(release::newer_than(&fixture(), v(0, 1, 3)), None, "0.1.3 must not be offered anything here");
     assert_eq!(release::newer_than(&fixture(), v(1, 0, 0)), None);
     assert_eq!(release::newer_than(&fixture(), v(99, 0, 0)), None);
+}
+
+#[test]
+fn the_answer_does_not_depend_on_the_order_the_forge_serves() {
+    // This forge happens to answer newest-first. Nothing documents that, and
+    // the parser takes a maximum rather than the head of the list -- so the
+    // same real response, reversed, must give the same answer. Without this,
+    // "newest-first" would be an undeclared dependency on the forge's current
+    // behaviour.
+    let mut releases: Vec<serde_json::Value> = serde_json::from_str(&fixture()).expect("JSON");
+    let served: Vec<String> = releases.iter().map(|r| r["tag_name"].to_string()).collect();
+    releases.reverse();
+    let reversed = serde_json::to_string(&releases).expect("re-serialise");
+    assert_ne!(
+        served,
+        releases.iter().map(|r| r["tag_name"].to_string()).collect::<Vec<_>>(),
+        "the reversal did nothing"
+    );
+
+    let update = release::newer_than(&reversed, v(0, 0, 9)).expect("still offered");
+    assert_eq!(update.version, NEWEST, "the newest release must win whichever end of the list it is at");
 }
 
 #[test]
