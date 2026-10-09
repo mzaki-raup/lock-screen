@@ -112,3 +112,10 @@ $RECYCLE.BIN/
 
 # Rust
 /target
+
+# ...but the .NET compatibility fixture must be committed: the test that reads
+# it is the regression gate on config compatibility, and it fails on a fresh
+# clone without it. Its Password value is a DPAPI blob of the publicly
+# documented "1234" default, bound to the machine that generated it, so it is
+# not a credential anywhere else.
+!crates/lockscreen-core/tests/fixtures/*.ini
