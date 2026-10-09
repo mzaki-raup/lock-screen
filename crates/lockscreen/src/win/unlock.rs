@@ -63,6 +63,35 @@ pub enum Answer {
     Cancelled,
 }
 
+/// Why the prompt is being shown.
+///
+/// The ladder is the same either way -- one implementation, so the two cannot
+/// drift -- but two things differ, and both are deliberate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    /// Unlocking a locked machine.
+    Unlock,
+    /// Authorising a change to the app's own settings, including its
+    /// credentials. **Voice is not offered here.** Recognition is
+    /// speaker-independent, so a spoken word is not evidence of who is
+    /// standing there -- acceptable as a shortcut past a password you chose,
+    /// not acceptable as permission to replace that password.
+    Authorize,
+}
+
+impl Purpose {
+    fn title(self, config: &Config) -> String {
+        match self {
+            Purpose::Unlock => config.title.clone(),
+            Purpose::Authorize => "Authenticate to change settings".to_owned(),
+        }
+    }
+
+    fn offers_voice(self, config: &Config) -> bool {
+        matches!(self, Purpose::Unlock) && config.voice.enabled
+    }
+}
+
 /// Which rung of the ladder let the user in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Via {
@@ -116,7 +145,7 @@ thread_local! {
 /// `owner` is the overlay window: disabled while the prompt is up, re-enabled
 /// afterwards. The prompt is `WS_EX_TOPMOST` so it sits above an overlay that
 /// is itself topmost.
-pub fn ask(owner: HWND, config: &Config) -> Answer {
+pub fn ask(owner: HWND, config: &Config, purpose: Purpose) -> Answer {
     if STATE.with(|s| s.borrow().is_some()) {
         return Answer::Cancelled;
     }
@@ -131,7 +160,7 @@ pub fn ask(owner: HWND, config: &Config) -> Answer {
     let s = |v: i32| ui::scale(v, dpi);
     let font = ui::message_font(dpi);
     let class = ui::wide("LockScreen.Unlock");
-    let title = ui::wide(&config.title);
+    let title = ui::wide(&purpose.title(config));
     let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
 
     let hwnd = unsafe {
@@ -208,7 +237,7 @@ pub fn ask(owner: HWND, config: &Config) -> Answer {
 
     // Only laid out when voice unlock is switched on, so a dialog that cannot
     // use it is not left with a gap where the button would have been.
-    let voice_button = if config.voice.enabled {
+    let voice_button = if purpose.offers_voice(config) {
         let b = add(ID_VOICE, "BUTTON", "Unlock by voice", WS_TABSTOP, (pad, y, wide_button, button_h));
         y += button_h + gap;
         Some(b)

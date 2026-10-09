@@ -19,6 +19,7 @@ pub mod hello;
 pub mod hooks;
 pub mod monitors;
 pub mod overlay;
+pub mod settings;
 pub mod setup;
 pub mod ui;
 pub mod unlock;

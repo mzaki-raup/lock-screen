@@ -260,7 +260,7 @@ impl Session {
             if WAKE.replace(false) {
                 let anchor = self.window_under_cursor();
                 let started = std::time::Instant::now();
-                match unlock::ask(anchor, config) {
+                match unlock::ask(anchor, config, unlock::Purpose::Unlock) {
                     unlock::Answer::Unlocked(via) => return Outcome::Unlocked(via),
                     unlock::Answer::Cancelled => {
                         // A cancel that comes back faster than any human could
