@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="LockScreen" version="1.0.0.0" />
+
+  <!-- asInvoker, deliberately. The app is portable: it writes config.ini beside
+       its own executable and never needs elevation. Anything that asked for
+       administrator would also be a worse lock screen, not a better one. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / 11. The supported floor is build 17763 (1809), which is
+           what the .NET csproj declared via TargetPlatformMinVersion. -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!-- This is the fix for defect D2. The .NET app declared no DPI awareness
+           at all and mixed physical pixels with device-independent units, so a
+           scaled monitor was left partly uncovered: a hole in a lock screen.
+           Declaring it here rather than calling SetProcessDpiAwarenessContext
+           means it applies before any of our code runs. PerMonitorV2 needs
+           Windows 10 1703; the 1809 floor is comfortably past that. -->
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <!-- Takes effect from Windows 10 1903 and is ignored harmlessly before
+           that. The program calls wide APIs throughout, so it changes nothing
+           either way; it is here so that any CRT path that does touch the
+           narrow API gets UTF-8 rather than the local code page. -->
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+
+  <!-- Common Controls v6: visual styles, alpha image lists, SetWindowSubclass. -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0"
+                        processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+    </dependentAssembly>
+  </dependency>
+</assembly>

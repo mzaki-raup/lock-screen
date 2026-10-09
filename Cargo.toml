@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/lockscreen", "crates/lockscreen-core"]
+
+# One version for the whole workspace. The release workflow checks the tag
+# against this value, and `build.rs` turns it into the VERSIONINFO resource, so
+# it is the single place a release version is written.
+#
+# 0.x while the port is incomplete. It becomes 2.0.0 at the first release that
+# replaces the .NET app, which shipped as 1.1.1.0 -- claiming 2.0.0 before the
+# overlay exists would overstate what the binary does.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Mohd Zaki Raup"]
+description = "Configurable lock screen overlay for Windows"
+publish = false
+
+[workspace.dependencies]
+windows-core = "0.62"
+windows-registry = "0.100"
+rust-ini = "0.21"
+argon2 = { version = "0.6", features = ["password-hash"] }
+zeroize = { version = "1", features = ["derive"] }
+
+[workspace.dependencies.windows]
+version = "0.62"
+features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Console",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Registry",
+  "Win32_UI_WindowsAndMessaging",
+]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

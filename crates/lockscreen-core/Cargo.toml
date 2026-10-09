@@ -1,0 +1,20 @@
+[package]
+name = "lockscreen-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Shared logic for the Lock Screen app: paths, config, credentials, sounds, policy"
+publish.workspace = true
+
+[dependencies]
+argon2.workspace = true
+rust-ini.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+# The compatibility test calls CryptProtectData directly to make its own blob,
+# because the committed fixture's blob is bound to the machine that wrote it.
+[target.'cfg(windows)'.dev-dependencies]
+windows.workspace = true

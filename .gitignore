@@ -109,3 +109,6 @@ $RECYCLE.BIN/
 
 # Config files
 *.ini
+
+# Rust
+/target

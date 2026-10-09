@@ -1,0 +1,23 @@
+[package]
+name = "lockscreen"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+# One executable, three modes. Keeps the .NET AssemblyName, so existing
+# shortcuts and documentation still name the right file.
+[[bin]]
+name = "LockScreen"
+path = "src/main.rs"
+
+[dependencies]
+lockscreen-core = { path = "../lockscreen-core" }
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+[build-dependencies]
+embed-resource = "3"
