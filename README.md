@@ -1,4 +1,4 @@
-# Lock Screen
+# LockScreen
 
 A configurable lock-screen overlay for Windows 10 (build 17763 or later) and Windows 11. It covers
 every connected monitor, and any key or mouse click brings up an unlock prompt that tries Windows
@@ -268,7 +268,7 @@ anything architectural.
 
 ## Credits
 
-Lock Screen — © 2026 Procybro Solutions. Author: Mohd Zaki Raup.
+LockScreen — © 2026 Procybro Solutions. Author: Mohd Zaki Raup.
 
 No licence file is present in this repository; treat the code as all rights reserved unless that
 changes.

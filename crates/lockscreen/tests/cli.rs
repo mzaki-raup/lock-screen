@@ -158,7 +158,7 @@ fn version_prints_the_version_and_succeeds() {
     let ran = run(&app, &app.dir, &["--version"]);
 
     assert!(ran.ok, "--version should succeed: {:?}", ran.out);
-    assert!(ran.out.starts_with("Lock Screen "), "{:?}", ran.out);
+    assert!(ran.out.starts_with("LockScreen "), "{:?}", ran.out);
     assert!(ran.out.contains(env!("CARGO_PKG_VERSION")), "{:?}", ran.out);
 }
 

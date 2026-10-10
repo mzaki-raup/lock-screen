@@ -148,7 +148,7 @@ fn run(mode: Mode) -> Result<(), String> {
 
 fn version_line() -> String {
     format!(
-        "Lock Screen {} ({}){}",
+        "LockScreen {} ({}){}",
         lockscreen_core::VERSION,
         env!("LOCKSCREEN_COMMIT"),
         match env!("LOCKSCREEN_BUILD_DATE") {
@@ -192,7 +192,7 @@ fn report(message: &str) {
         use windows::Win32::UI::WindowsAndMessaging::{MB_ICONINFORMATION, MB_OK, MessageBoxW};
         use windows::core::HSTRING;
         let text = HSTRING::from(message);
-        let caption = HSTRING::from("Lock Screen");
+        let caption = HSTRING::from("LockScreen");
         // SAFETY: both strings outlive the call.
         unsafe {
             MessageBoxW(None, &text, &caption, MB_OK | MB_ICONINFORMATION);
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn the_version_line_names_the_package_version() {
         let line = version_line();
-        assert!(line.starts_with("Lock Screen "), "{line}");
+        assert!(line.starts_with("LockScreen "), "{line}");
         assert!(line.contains(lockscreen_core::VERSION), "{line}");
     }
 }

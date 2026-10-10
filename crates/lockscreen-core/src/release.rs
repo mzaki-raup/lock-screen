@@ -106,7 +106,7 @@ impl State {
 /// The line settings mode shows: the running version, and how the search went.
 pub fn version_line(running: Version, state: State) -> String {
     let note = state.note();
-    if note.is_empty() { format!("Lock Screen {running}") } else { format!("Lock Screen {running} \u{2014} {note}") }
+    if note.is_empty() { format!("LockScreen {running}") } else { format!("LockScreen {running} \u{2014} {note}") }
 }
 
 /// A file attached to a release.
@@ -368,12 +368,9 @@ ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  LockScreen.exe
     #[test]
     fn the_version_line_reads_well_in_every_state() {
         let running = v(0, 1, 0);
-        assert_eq!(version_line(running, State::Unknown), "Lock Screen 0.1.0");
-        assert_eq!(version_line(running, State::UpToDate), "Lock Screen 0.1.0 \u{2014} up to date");
-        assert_eq!(
-            version_line(running, State::Available(v(0, 2, 0))),
-            "Lock Screen 0.1.0 \u{2014} 0.2.0 is available"
-        );
+        assert_eq!(version_line(running, State::Unknown), "LockScreen 0.1.0");
+        assert_eq!(version_line(running, State::UpToDate), "LockScreen 0.1.0 \u{2014} up to date");
+        assert_eq!(version_line(running, State::Available(v(0, 2, 0))), "LockScreen 0.1.0 \u{2014} 0.2.0 is available");
     }
 
     #[test]

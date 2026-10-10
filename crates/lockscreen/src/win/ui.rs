@@ -137,7 +137,7 @@ pub fn set_text(hwnd: HWND, text: &str) {
 
 pub fn error(owner: Option<HWND>, text: &str) {
     let t = wide(text);
-    let c = wide("Lock Screen");
+    let c = wide("LockScreen");
     unsafe {
         MessageBoxW(owner, PCWSTR(t.as_ptr()), PCWSTR(c.as_ptr()), MB_OK | MB_ICONERROR);
     }

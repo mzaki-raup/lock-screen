@@ -3,7 +3,7 @@ name = "lockscreen-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-description = "Shared logic for the Lock Screen app: paths, config, credentials, sounds, policy"
+description = "Shared logic for the LockScreen app: paths, config, credentials, sounds, policy"
 publish.workspace = true
 
 [dependencies]

@@ -131,7 +131,7 @@ pub fn collect(migrating: bool, config_path: &std::path::Path) -> Option<Chosen>
     let s = |v: i32| ui::scale(v, dpi);
     let font = ui::message_font(dpi);
     let class = ui::wide("LockScreen.Setup");
-    let title = ui::wide("Set up Lock Screen");
+    let title = ui::wide("Set up LockScreen");
     let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
 
     let hwnd = unsafe {

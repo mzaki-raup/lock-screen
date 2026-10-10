@@ -273,7 +273,7 @@ pub fn edit(config: &Config) -> Option<Changes> {
     let s = |v: i32| ui::scale(v, dpi);
     let font = ui::message_font(dpi);
     let class = ui::wide("LockScreen.Settings");
-    let title_text = ui::wide("Lock Screen settings");
+    let title_text = ui::wide("LockScreen settings");
     let style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN;
 
     let hwnd = unsafe {
@@ -667,7 +667,7 @@ fn update_pressed() {
             // back up, and restarting a lock screen mid-session is a bypass
             // rather than a convenience.
             set_status(&format!(
-                "Version {} is installed. Close this window, then start Lock Screen again to use it.",
+                "Version {} is installed. Close this window, then start LockScreen again to use it.",
                 found.version
             ));
         }

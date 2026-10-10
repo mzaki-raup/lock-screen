@@ -101,7 +101,7 @@ BEGIN
             VALUE "InternalName", "LockScreen"
             VALUE "LegalCopyright", "{copyright}"
             VALUE "OriginalFilename", "LockScreen.exe"
-            VALUE "ProductName", "Lock Screen"
+            VALUE "ProductName", "LockScreen"
             VALUE "ProductVersion", "{version}"
         END
     END

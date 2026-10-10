@@ -93,7 +93,7 @@ mod tests {
     fn environment() {
         use lockscreen_core::{config, paths};
 
-        println!("Lock Screen {}", lockscreen_core::VERSION);
+        println!("LockScreen {}", lockscreen_core::VERSION);
 
         match paths::exe_dir() {
             Ok(dir) => {

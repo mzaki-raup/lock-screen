@@ -561,7 +561,7 @@ config path is resolved.
 - **"Different icons per app."** Embed multiple icon resources in one PE. The Start Menu shortcut
   points at `LockScreen.exe,1` for the settings icon, and the window icon is set at runtime with
   `LoadIconW` + `WM_SETICON`.
-- **"Discoverability in the Start Menu."** A `.lnk` carries arguments, so "Lock Screen Settings" is
+- **"Discoverability in the Start Menu."** A `.lnk` carries arguments, so "LockScreen Settings" is
   a shortcut with `--settings` and its own icon index.
 
 ### Caveats to plan for

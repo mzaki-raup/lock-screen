@@ -64,6 +64,10 @@ Lock Screen 0.1.0
   voice       a recogniser compiled, so the microphone path works
 ```
 
+The name in that first line is as 0.1.0 printed it. It is one word, `LockScreen`, from 0.2.4 --
+the block is left as captured rather than tidied, because it is a record of what the machine
+answered and not a sample of current output.
+
 ### 2.1 What each DPI awareness sees
 
 ```text
