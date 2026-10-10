@@ -107,6 +107,10 @@ jobs:
         run: |
           $api = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
           $headers = @{ Authorization = "token $env:TOKEN" }
+          # The release is titled "LockScreen <version>", unspaced, to match the
+          # things it actually contains -- LockScreen.exe and
+          # LockScreen-<version>-windows-x64.zip. The product name in prose and
+          # in the windows is still "Lock Screen"; this is the artifact name.
 
           # 1. The token works and the API is reachable at all.
           try {
@@ -321,7 +325,7 @@ jobs:
           $body = @{
             tag_name         = "${{ github.ref_name }}"
             target_commitish = "${{ github.sha }}"
-            name             = "Lock Screen ${{ steps.version.outputs.version }}"
+            name             = "LockScreen ${{ steps.version.outputs.version }}"
             body             = (Get-Content notes.md -Raw)
             draft            = $false
             prerelease       = $false
