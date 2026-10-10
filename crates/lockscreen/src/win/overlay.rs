@@ -243,9 +243,22 @@ impl Session {
     fn pump(&mut self, config: &Config) -> Outcome {
         let mut msg = MSG::default();
         let mut instant_cancels = 0u32;
-        // The first prompt is immediate: the machine has just locked and
-        // somebody is standing in front of it.
-        WAKE.set(true);
+        // No prompt until somebody asks for one. The overlay goes up bare, and
+        // the hooks wake it on the first key or click -- which is what the
+        // README has always described and what the .NET version did.
+        //
+        // It was the other way round until 0.2.5, on the reasoning that "the
+        // machine has just locked and somebody is standing in front of it".
+        // That has it backwards: a screen is locked *because* its owner is
+        // leaving, so an immediate prompt puts a password box in front of
+        // nobody. And the prompt starts Windows Hello as it opens, so on
+        // face-recognition hardware the camera would look at the person who had
+        // just locked the screen, verify them, and unlock it again -- a lock
+        // screen defeating itself a second after it appeared.
+        //
+        // Set explicitly rather than left to the cell's initial value, because
+        // the value this starts from is the whole behaviour.
+        WAKE.set(false);
 
         loop {
             // A monitor was attached, removed, or re-resolutioned. Rebuild

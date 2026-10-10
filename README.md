@@ -1,7 +1,8 @@
 # LockScreen
 
 A configurable lock-screen overlay for Windows 10 (build 17763 or later) and Windows 11. It covers
-every connected monitor, and any key or mouse click brings up an unlock prompt that tries Windows
+every connected monitor and then waits: nothing is asked until a key is pressed or the mouse is
+clicked, at which point the unlock prompt appears and tries Windows
 Hello first — face or fingerprint, falling back to your PIN — then an app password, with an optional
 spoken command as a convenience and a master password as a recovery path.
 

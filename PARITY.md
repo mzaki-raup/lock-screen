@@ -147,8 +147,15 @@ Sign out and Switch user remain reachable if the overlay misbehaves.
 
 ### Overlay, on mixed DPI
 
-1. **Both monitors covered.** Lock. Check both screens edge to edge, including under the taskbar.
-   *Failure:* any desktop visible at an edge, or one monitor left entirely uncovered.
+1. **Both monitors covered, and no prompt yet.** Lock. Check both screens edge to edge, including
+   under the taskbar. *Failure:* any desktop visible at an edge, or one monitor left entirely
+   uncovered.
+   > **Also the wake behaviour, which 0.2.5 fixes.** Nothing should be asked of you until you press
+   > a key or click: the overlay goes up bare, and the first input brings the prompt and Windows
+   > Hello with it. Until 0.2.5 the prompt opened immediately, which meant Hello started as the
+   > owner was walking away -- and on face-recognition hardware it could verify them and unlock the
+   > screen a second after it locked. *Failure:* a password box, or a Hello prompt, before you
+   > touched anything.
 2. **Side by side with the .NET app, on the 150% monitor.** The C# is no longer in this tree, so
    get it from the tag first:
 
