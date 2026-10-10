@@ -44,10 +44,11 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWL_EXSTYLE, GetCursorPos, GetMessageW,
-    GetWindowLongPtrW, HWND_TOPMOST, LWA_ALPHA, MSG, PostMessageW, RegisterClassW, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOOWNERZORDER, SWP_NOSIZE, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    TranslateMessage, WM_APP, WM_DISPLAYCHANGE, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_PAINT,
-    WM_RBUTTONDOWN, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    GetWindowLongPtrW, HWND_TOPMOST, LWA_ALPHA, MSG, PM_REMOVE, PeekMessageW, PostMessageW, RegisterClassW, SW_SHOW,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SetLayeredWindowAttributes, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, TranslateMessage, WM_APP, WM_DISPLAYCHANGE, WM_ERASEBKGND, WM_LBUTTONDOWN,
+    WM_MBUTTONDOWN, WM_PAINT, WM_RBUTTONDOWN, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 use windows::core::PCWSTR;
 
@@ -240,6 +241,25 @@ impl Session {
     }
 
     /// The message loop. Returns when the user authenticates.
+    /// Throw away wake requests that arrived while a prompt was up.
+    ///
+    /// The hooks no longer post them -- see `hooks::wakes_the_prompt` -- but a
+    /// click that lands on an overlay window reaches this module's own window
+    /// procedure, which sets the flag directly. Clearing the queue here rather
+    /// than trusting one path means a cancelled prompt stays cancelled whatever
+    /// route the click took.
+    ///
+    /// The flag is cleared after draining, not before: a queued message would
+    /// otherwise set it again on the next dispatch.
+    fn discard_pending_wakes(&self) {
+        let mut msg = MSG::default();
+        // SAFETY: a filtered peek at this thread's own queue. PM_REMOVE takes
+        // the messages out instead of leaving them to be dispatched later, and
+        // the filter means nothing else is touched.
+        unsafe { while PeekMessageW(&mut msg, None, WM_APP_WAKE, WM_APP_WAKE, PM_REMOVE).as_bool() {} }
+        WAKE.set(false);
+    }
+
     fn pump(&mut self, config: &Config) -> Outcome {
         let mut msg = MSG::default();
         let mut instant_cancels = 0u32;
@@ -293,7 +313,10 @@ impl Session {
                             instant_cancels = 0;
                         }
                         // Still locked. Re-assert and wait: the prompt is gone,
-                        // the lock is not.
+                        // the lock is not -- and it stays gone until somebody
+                        // asks again, which is what discarding the queued
+                        // wakes is for.
+                        self.discard_pending_wakes();
                         self.reassert();
                     }
                 }

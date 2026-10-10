@@ -190,6 +190,11 @@ Sign out and Switch user remain reachable if the overlay misbehaves.
    > *not* establish is which modality was offered, or item 7.
 7. **Dismiss it.** *Right:* the password box, with Hello offered again. *Failure:* unlocking, or a
    dead prompt.
+   > **And then cancel the whole prompt.** It should return to the bare locked overlay and stay
+   > there until you press a key again. Until 0.2.6 it reopened immediately: the hooks counted
+   > every keystroke as a request for a prompt, including the Escape that had just closed one, so
+   > cancelling looked like it did nothing. *Failure:* a prompt that comes straight back, or an
+   > overlay that stops responding to input afterwards.
 8. **Hello unavailable.** Remove the PIN and biometrics for the account, or use a machine without
    them. *Right:* straight to the password, with no retry offered. *Failure:* a Hello button that
    does nothing, or a wait before the prompt appears.

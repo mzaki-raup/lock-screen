@@ -205,6 +205,28 @@ impl Drop for PromptVisible {
     }
 }
 
+/// Whether an input event should bring the prompt up.
+///
+/// One rule for both hooks, because they had the event list twice and only one
+/// of them had the prompt check -- which is to say neither did, since the
+/// keyboard hook called `wake()` before looking.
+///
+/// **Nothing wakes a prompt that is already up.** Those events are the password
+/// being typed into it, the PIN going into Hello, or the Escape that dismisses
+/// it. Counted as wakes they left the flag set, so `pump` reopened the prompt
+/// the instant it closed: cancelling appeared to do nothing at all. The
+/// keystroke that cancelled it had already asked for a new one. Fixed in 0.2.6.
+///
+/// Press events only. A key-up would otherwise reopen the prompt as the
+/// cancelling keystroke was released, and a mouse-move would reopen it by
+/// moving the mouse.
+fn wakes_the_prompt(message: u32, prompt_visible: bool) -> bool {
+    if prompt_visible {
+        return false;
+    }
+    matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN | WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN)
+}
+
 /// Wake the overlay, if a session is running.
 fn wake() {
     let target = TARGET.load(Ordering::Relaxed);
@@ -232,7 +254,9 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
             return LRESULT(1);
         }
 
-        wake();
+        if wakes_the_prompt(message, PROMPT_VISIBLE.load(Ordering::Relaxed)) {
+            wake();
+        }
 
         // Ordinary typing. While the prompt is up it has the focus and needs
         // the keystroke -- including Hello's PIN entry. While it is down, the
@@ -252,7 +276,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
     }
 
     let message = wparam.0 as u32;
-    if matches!(message, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN) {
+    if wakes_the_prompt(message, PROMPT_VISIBLE.load(Ordering::Relaxed)) {
         wake();
     }
 
@@ -333,6 +357,30 @@ mod tests {
         // honest answer keeps anyone from "fixing" it back.
         let ctrl_alt = Modifiers { ctrl: true, alt: true, shift: false, win: false };
         assert!(!should_suppress(0x2E, ctrl_alt), "no hook can swallow the SAS; do not pretend");
+    }
+
+    #[test]
+    fn nothing_wakes_a_prompt_that_is_already_up() {
+        // The defect this rule exists for: every keystroke typed into the
+        // prompt, and the Escape that dismissed it, counted as a request for a
+        // new prompt. Cancelling therefore appeared to do nothing -- the
+        // prompt came straight back.
+        for message in [WM_KEYDOWN, WM_SYSKEYDOWN, WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN, WM_XBUTTONDOWN] {
+            assert!(wakes_the_prompt(message, false), "{message:#x} should wake a bare overlay");
+            assert!(!wakes_the_prompt(message, true), "{message:#x} must not wake a prompt that is up");
+        }
+    }
+
+    #[test]
+    fn only_press_events_wake_the_prompt() {
+        use windows::Win32::UI::WindowsAndMessaging::{WM_KEYUP, WM_MOUSEMOVE, WM_SYSKEYUP};
+        // A key-up would reopen the prompt as the cancelling keystroke was
+        // released, which is the same bug one event later. A mouse-move would
+        // reopen it by moving the mouse.
+        for message in [WM_KEYUP, WM_SYSKEYUP, WM_MOUSEMOVE] {
+            assert!(!wakes_the_prompt(message, false), "{message:#x} is not a press");
+            assert!(!wakes_the_prompt(message, true), "{message:#x} is not a press");
+        }
     }
 
     #[test]
