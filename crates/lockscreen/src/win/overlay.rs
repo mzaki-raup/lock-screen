@@ -396,6 +396,9 @@ fn register_class() {
             lpfnWndProc: Some(window_proc),
             hInstance: super::instance(),
             lpszClassName: PCWSTR(class.as_ptr()),
+            // Without this the class has no cursor, and Windows shows the
+            // "app starting" hourglass over the window. See `ui::arrow_cursor`.
+            hCursor: ui::arrow_cursor(),
             // No class background. The layered variant is filled by the
             // compositor and the blurred one paints its own, so letting Windows
             // erase first would flash.

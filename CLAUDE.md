@@ -124,6 +124,11 @@ Learned the hard way; each cost real time.
   Comparing the raw values inverts the test.
 - **`.gitignore` has a blanket `*.ini`**, so a new test fixture needs an
   explicit negation or it is silently left out of the commit.
+- **A window class with a null `hCursor` shows the "app starting" hourglass**,
+  not the arrow. Windows does not fall back to the arrow; it leaves the cursor
+  as it was, and over a window whose class never set one you get the busy
+  pointer. All four classes use `ui::arrow_cursor`, and a test reads the four
+  source files to check they still do.
 - **Low-level hooks must be fast.** Windows removes a hook whose callback
   overruns `LowLevelHooksTimeout`. Set a flag and return.
 - **A backslash does not survive being written through a shell heredoc into a

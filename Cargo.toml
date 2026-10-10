@@ -10,7 +10,7 @@ members = ["crates/lockscreen", "crates/lockscreen-core"]
 # replaces the .NET app, which shipped as 1.1.1.0 -- claiming 2.0.0 before the
 # overlay exists would overstate what the binary does.
 [workspace.package]
-version = "0.2.6"
+version = "0.2.7"
 edition = "2024"
 authors = ["Mohd Zaki Raup"]
 description = "Configurable lock screen overlay for Windows"

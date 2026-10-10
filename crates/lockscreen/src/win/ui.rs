@@ -12,9 +12,9 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, GetCursorPos, GetWindowTextLengthW, GetWindowTextW, HMENU, MB_ICONERROR, MB_OK, MessageBoxW,
-    NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SendMessageW, SetWindowTextW,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETFONT,
+    CreateWindowExW, GetCursorPos, GetWindowTextLengthW, GetWindowTextW, HCURSOR, HMENU, IDC_ARROW, LoadCursorW,
+    MB_ICONERROR, MB_OK, MessageBoxW, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    SendMessageW, SetWindowTextW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETFONT,
 };
 use windows::core::PCWSTR;
 
@@ -128,6 +128,24 @@ pub fn get_text(hwnd: HWND) -> String {
     }
 }
 
+/// The standard arrow, for a window class's `hCursor`.
+///
+/// A class registered with a null `hCursor` does **not** quietly get the arrow.
+/// Windows leaves the cursor as whatever it was, and over a window whose class
+/// has never set one it shows the "app starting" pointer -- the arrow with an
+/// hourglass beside it. On the overlay that reads as a lock screen that has
+/// hung, which is the single worst impression this program can give: the one
+/// thing standing between somebody and their desktop, apparently wedged.
+///
+/// All four window classes use this. Four copies of `LoadCursorW` is how the
+/// five duplicated helpers of defect D6 started.
+pub fn arrow_cursor() -> HCURSOR {
+    // SAFETY: a null module handle with a system cursor id is the documented
+    // way to load a shared system cursor. It is owned by the system, must not
+    // be destroyed, and a failure here costs the cursor and nothing else.
+    unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() }
+}
+
 pub fn set_text(hwnd: HWND, text: &str) {
     let w = wide(text);
     unsafe {
@@ -180,6 +198,32 @@ pub fn keep_on_screen(x: i32, y: i32, w: i32, h: i32) -> (i32, i32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_arrow_cursor_actually_loads() {
+        // A null handle here is what put the "app starting" hourglass over the
+        // overlay: the class ends up with no cursor and Windows picks that one.
+        // Worth asserting rather than assuming, because the symptom is cosmetic
+        // enough to live for several releases -- it did.
+        let cursor = arrow_cursor();
+        assert!(!cursor.is_invalid(), "the shared system arrow should always load");
+    }
+
+    #[test]
+    fn every_window_class_in_the_app_sets_a_cursor() {
+        // Checked as source rather than at runtime: registering a class needs a
+        // module handle and a message loop, while the mistake is visible in the
+        // text. Each of these registers a WNDCLASSW, and a class without
+        // hCursor shows the hourglass.
+        for (name, src) in [
+            ("overlay", include_str!("overlay.rs")),
+            ("unlock", include_str!("unlock.rs")),
+            ("settings", include_str!("settings.rs")),
+            ("setup", include_str!("setup.rs")),
+        ] {
+            assert!(src.contains("WNDCLASSW {"), "{name} should still register a class");
+            assert!(src.contains("hCursor: ui::arrow_cursor()"), "{name} registers a class with no cursor");
+        }
+    }
     use super::*;
 
     #[test]

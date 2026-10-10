@@ -139,6 +139,9 @@ pub fn collect(migrating: bool, config_path: &std::path::Path) -> Option<Chosen>
             lpfnWndProc: Some(window_proc),
             hInstance: super::instance(),
             lpszClassName: PCWSTR(class.as_ptr()),
+            // Without this the class has no cursor, and Windows shows the
+            // "app starting" hourglass over the window. See `ui::arrow_cursor`.
+            hCursor: ui::arrow_cursor(),
             hbrBackground: HBRUSH(GetSysColorBrush(COLOR_WINDOW).0),
             ..Default::default()
         };
