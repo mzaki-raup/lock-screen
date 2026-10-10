@@ -239,3 +239,85 @@ fn the_program_runs_from_a_path_with_spaces_and_unicode_in_it() {
     let ran = run(&app, &app.dir, &["--setup"]);
     assert!(ran.out.contains("already set up"), "{:?} (in {})", ran.out, app.dir.display());
 }
+
+/// Deny this user write access to a directory for as long as it is held.
+///
+/// `icacls` rather than anything in `std`: Windows read-only-ness that matters
+/// is an ACL, not the `readonly` file attribute, and the attribute is ignored
+/// for directories anyway.
+struct DenyWrite {
+    dir: PathBuf,
+    user: String,
+}
+
+impl DenyWrite {
+    /// `None` when the deny could not be made to take effect, which is not a
+    /// failure: a machine where this user cannot be denied -- or where
+    /// something overrides it -- simply cannot host this test.
+    fn on(dir: &Path) -> Option<Self> {
+        let user = std::env::var("USERNAME").ok()?;
+        let ok = Command::new("icacls")
+            .args([dir.to_str()?, "/deny", &format!("{user}:(W)")])
+            .output()
+            .ok()?
+            .status
+            .success();
+        if !ok {
+            return None;
+        }
+        let guard = Self { dir: dir.to_owned(), user };
+
+        // Trust the probe, not the exit code. If a write still succeeds the
+        // deny did not bite, and the guard undoes itself on the way out.
+        let probe = dir.join("still-writable");
+        if std::fs::File::create(&probe).is_ok() {
+            let _ = std::fs::remove_file(&probe);
+            return None;
+        }
+        Some(guard)
+    }
+}
+
+impl Drop for DenyWrite {
+    fn drop(&mut self) {
+        // Removed however the test ends, including a panic. A leftover deny ACE
+        // on a temp directory would be a nasty thing to leave behind -- the
+        // directory could not even be deleted afterwards.
+        let _ = Command::new("icacls").args([self.dir.to_str().unwrap_or_default(), "/remove:d", &self.user]).output();
+    }
+}
+
+#[test]
+fn a_folder_it_cannot_write_to_is_refused_up_front() {
+    // Portable means the program's own folder has to be writable, and finding
+    // that out at save time -- after somebody has typed a new password -- is
+    // the outcome worth engineering against. Until now nothing tested the
+    // refusal; it was checklist item 20 in PARITY.md.
+    let app = Portable::new("readonly");
+    app.write_config(CONFIGURED);
+
+    let Some(_deny) = DenyWrite::on(&app.dir) else {
+        // Said out loud rather than passing quietly, so a run where this
+        // proved nothing cannot be mistaken for one where it did.
+        println!("skipped: write access to {} could not be denied on this machine", app.dir.display());
+        return;
+    };
+
+    // `--setup` would otherwise be refused for a different reason -- the copy
+    // is already configured -- so the message is the thing that distinguishes
+    // them. The writability check runs first, before the config is even read.
+    let ran = run(&app, &app.dir, &["--setup"]);
+
+    assert!(!ran.ok, "a read-only folder must not succeed: {:?}", ran.out);
+    assert!(ran.out.contains("read-only"), "{:?}", ran.out);
+    assert!(
+        ran.out.contains(&app.dir.display().to_string()),
+        "the message has to name the folder, or it is not actionable: {:?}",
+        ran.out
+    );
+    assert!(
+        !ran.out.contains("already set up"),
+        "the writability check must come before the config is read: {:?}",
+        ran.out
+    );
+}

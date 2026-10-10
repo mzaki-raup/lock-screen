@@ -25,8 +25,12 @@ cargo test -p lockscreen --bin LockScreen environment -- --ignored --nocapture
 
 ## 1. What the suite now proves
 
-Phase 08 added 9 tests, taking the suite from 118 to 126. The column that matters is the last one:
-a test that cannot fail is not evidence.
+Phase 08 added 9 tests, taking the suite from 118 to 126. It has since grown to **148**, and the
+rows below are kept current rather than left as a snapshot of that phase: several were added because
+something reached a user that should not have.
+
+The column that matters is the last one. *A test that cannot fail is not evidence*, so where a test
+was checked by deliberately breaking the thing it guards, that is said.
 
 | Property | Where | What it catches |
 | --- | --- | --- |
@@ -38,6 +42,11 @@ a test that cannot fail is not evidence.
 | A **killed** holder frees the lock | same | A crashed lock screen stopping the next one from starting, which would leave the screen unlocked by the very mechanism meant to lock it. |
 | This process **really is per-monitor aware** | `lockscreen/src/win/monitors.rs` | `app.manifest` stopping being embedded — a silent failure that turns every overlay coordinate into a virtualised one. Live on any monitor above 100%; vacuous below. |
 | Output goes to a **redirected stdout**, not a modal dialog | `lockscreen/tests/cli.rs`, by existing at all | See §2.3. |
+| A folder the program **cannot write to** is refused up front | `lockscreen/tests/cli.rs` | Discovering it at save time, after somebody has typed a new password. Was **checklist item 20** until 0.2.4; the test denies itself write access with `icacls`, says so out loud if the deny does not bite, and was confirmed by disabling the check and watching it fail. |
+| The updater understands **this forge's actual JSON** | `lockscreen-core/tests/forgejo_release_compat.rs` | A field named `download_url` rather than `browser_download_url`. Every hand-written test would pass while the app reported "no update" for ever. The fixture is a verbatim API response, with two releases so that *picking the newest* is distinguishable from picking the first. |
+| No user-facing message carries a **flattened line continuation** | `voice`, `hello`, `setup`, `settings` | `is required.                  Try again`, which shipped in 0.2.3 and reached a user. Every message in those four modules is checked for double spaces and line breaks. |
+| The **two password floors** stay 4 and 8, and the master is never the weaker | `lockscreen-core/src/credential.rs` | A "simplification" back to one number. The master password is the recovery credential. |
+| A required-match level **survives the round trip** through the stored float | `lockscreen/src/win/voice.rs` | A setting that silently fails to stick: choose Medium, save, reopen, see High. |
 
 Both cross-process properties were checked by breaking them on purpose and confirming the test
 failed — first the holder not claiming, then the holder not being killed. The second attempt caught
@@ -127,6 +136,15 @@ like nothing happening.
 Have a way out before starting: **Ctrl+Alt+Del** still works (by design — §12 of the study), so
 Sign out and Switch user remain reachable if the overlay misbehaves.
 
+> **Part of this has now happened in anger, and it earned its place.** Running the overlay with
+> Hello and with voice enabled turned up two defects in 0.2.0 that the whole suite had missed: the
+> screen stayed locked for seconds after Hello verified, because a worker put its answer on a
+> channel while the UI thread waited on a *window message*; and a correctly recognised word was
+> reported as the wrong word, because one outcome covered both "wrong word" and "not confident
+> enough". Both are fixed, both now have tests, and neither was reachable without a person at the
+> keyboard. The items below are annotated with what that established — and, carefully, with what it
+> did not.
+
 ### Overlay, on mixed DPI
 
 1. **Both monitors covered.** Lock. Check both screens edge to edge, including under the taskbar.
@@ -160,6 +178,9 @@ Sign out and Switch user remain reachable if the overlay misbehaves.
 6. **Biometric, then PIN.** Lock with Hello available. *Right:* the Hello prompt appears **above**
    the overlay and is focused. *Failure:* the prompt behind the overlay, or no prompt — this is
    Finding B, the one thing the port fixes that cannot be seen any other way.
+   > **Observed on 0.2.0.** The prompt appeared, was answerable, and verified. It could not have
+   > been answered from behind an always-on-top overlay, so Finding B's fix holds. What this did
+   > *not* establish is which modality was offered, or item 7.
 7. **Dismiss it.** *Right:* the password box, with Hello offered again. *Failure:* unlocking, or a
    dead prompt.
 8. **Hello unavailable.** Remove the PIN and biometrics for the account, or use a machine without
@@ -170,6 +191,11 @@ Sign out and Switch user remain reachable if the overlay misbehaves.
 
 9. **On and recognised.** Enable voice, lock, say the word. *Failure:* no response, or a response to
    something that was not the word.
+   > **Half observed on 0.2.0 and 0.2.3.** The recogniser ran, listened and returned the right
+   > word, so the microphone path and the list constraint work end to end. It was then refused by
+   > the confidence gate — at *low* confidence for a coined word — so **an accepted voice unlock
+   > has still never happened**. That is the half this item is really about, and it needs either a
+   > command the recogniser is sure of or Required match lowered.
 10. **Somebody else says it.** *Right:* it unlocks — recognition is speaker-independent, which is
     why it is off by default and documented as a convenience rather than a factor. Confirm that is
     still understood rather than filed as a bug.
@@ -208,15 +234,21 @@ Sign out and Switch user remain reachable if the overlay misbehaves.
     starting with no credential, or the DPAPI blob still in the file.
 19. **Two instances.** Start the overlay twice. *Right:* the second exits quietly — the screen is
     already locked, which is what was wanted. *Failure:* two overlays, each needing its own unlock.
-20. **A read-only folder.** Put the app somewhere it cannot write. *Right:* it refuses up front,
-    naming the folder. *Failure:* discovering it after somebody has typed a new password.
+20. ~~**A read-only folder.**~~ **Closed in 0.2.4** — automated, see §1. The test denies itself
+    write access to the program's folder and checks the refusal names it. Nothing left to do by
+    hand.
 
 ### The updater
 
 21. **Unreachable from the overlay.** Confirm there is no path to it while the screen is locked.
-22. **A check with nothing published.** Settings → check. *Right:* "this is the newest release".
-    *Failure:* an error — the forge answers `200` with `[]`, and reporting that as unreachable would
-    be wrong. Pinned as a test case, but worth seeing once through the UI.
+22. **An update, end to end.** There are seven releases now, so this is no longer the empty-list
+    case. On the newest build, settings → check should say "this is the newest release". On the
+    0.0.9 build in `lock-screen-update-test`, it should offer **the newest**, not the oldest —
+    download, checksum, rename aside, and a prompt to restart by hand. *Then:* `--version` reports
+    the new one and `LockScreen.old.exe` disappears on the next start. *Failure to watch for:* a
+    leftover `.old.exe`, or an install that leaves no working program.
+    > The empty-list case — `200` with `[]`, which must read as "nothing newer" and not as a failed
+    > check — is pinned as a test case and can no longer be reproduced against the live forge.
 
 ---
 
@@ -229,5 +261,5 @@ The honest gaps, so nobody reads §1 as more than it is.
 | **Authenticode signing** | No certificate exists. Releases are unsigned, and the workflow says so twice in its log. The *mechanics* are no longer unverified: the signing step was run against a throwaway self-signed certificate, and the base64 round-trip, the signtool discovery, the command line and the DigiCert timestamp server all work. What is missing is only the certificate. | A certificate whose key CI can use — and that is narrower than it sounds. Since June 2023 the CA/Browser Forum requires code-signing keys to live in hardware, so no CA issues an exportable PFX for a publicly trusted certificate: the `CERT_PFX_BASE64` secret can only ever hold a self-signed or internal-CA one, which `signtool verify` correctly refuses. A trusted signature from CI needs a signing service that holds the key (Azure Trusted Signing, DigiCert KeyLocker, SSL.com eSigner) or a hardware token, which does not suit an unattended runner. That is a decision with a cost attached, not a code change. **Decided on 9 October 2026: stay unsigned for now.** The workflow is ready for whichever service is chosen later; revisit if the app is ever distributed beyond people who can check a hash. |
 | **Windows 10** | No Windows 10 machine. The supported floor is build 17763 and the code paths are there, but the Win10 blur branch has never run. | A 1809-or-later machine, and items 1–5. |
 | **Hardware without Hello, or without a microphone** | This machine has both. | Items 8 and 11 can be approximated by disabling them, which is not the same as absent hardware. |
-| **An install that has actually been updated** | No release has been published, so the rename-aside install has never replaced a real running program. | One release, then item 22 for real. |
+| **An install that has actually been updated** | Seven releases are published now, so the obstacle is gone — but no copy has yet replaced itself. The download half *is* verified: every release's published `LockScreen.exe` was fetched and hashed against its own `SHA256SUMS.txt`, and matched. What has never run is the rename-aside install. | Item 22, on the 0.0.9 build left in `lock-screen-update-test` for exactly this. It must offer the newest release rather than merely "something newer", there being seven to choose between. |
 | **Whether a Credential Provider is the goal** | Still open. The overlay is a deterrent, not a security boundary, in either language — §12 of the study. If an unbypassable lock is the real requirement, this port does not deliver it and never was going to. | A decision, not a test. |
