@@ -25,10 +25,24 @@ name: Release
 #
 # The `if:` on the job keeps this off the Forgejo, which reads this directory
 # too and cannot fetch published actions. See build.yml.
+#
+# **Re-running for a tag that already exists.** The Forgejo and GitHub publish
+# the same tag independently, so one can succeed while the other fails -- as
+# v0.2.8 did here, on a preflight bug, after the Forgejo had already published
+# it. Re-tagging is not an option then: the Forgejo release is attached to the
+# commit the tag names. So the manual trigger takes a tag, checks that tag's
+# source out, and runs the rest exactly as a push would. Actions tab, Release,
+# "Run workflow", type the tag. The workflow *definition* is the branch's;
+# the *source built* is the tag's.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'An existing tag to publish, e.g. v0.2.8, when its push-triggered run failed'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -47,14 +61,18 @@ jobs:
     steps:
       # Not shallow, and with every tag: the notes below are the commits since
       # the previous tag.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
 
+      # `tag` is decided once, here, and every later step reads it from this
+      # output: a push names it in `github.ref_name`, a manual run in the input.
       - name: The tag must match the version in Cargo.toml
         id: version
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "'$tag' is not a release tag of the form vX.Y.Z" }
           $version = $tag -replace '^v', ''
           $inCargo = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value
           if ($version -ne $inCargo) {
@@ -63,6 +81,7 @@ jobs:
             throw "Tag $tag does not match Cargo.toml version $inCargo"
           }
           "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
 
       # A second release for one tag is refused, and that refusal arriving
       # after the build is what this step is for. The Forgejo job learned this
@@ -71,22 +90,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # `gh` reports "release not found" on stderr, which is the answer we
-          # want. GitHub's pwsh runs with ErrorActionPreference=Stop, and under
-          # it a native command writing to stderr has been a terminating error
-          # on some PowerShell versions -- so it is relaxed for this one call,
-          # and the exit code is what is judged.
+          # `gh` exits 1 and says "release not found", which is the answer we
+          # want. Two things about GitHub's pwsh steps make that awkward: they
+          # run with ErrorActionPreference=Stop, under which a native command
+          # writing to stderr has been a terminating error on some PowerShell
+          # versions; and the wrapper ends every step with `exit $LASTEXITCODE`,
+          # so the 1 that gh leaves behind failed this step at v0.2.8 even
+          # though the check itself had passed. Hence the relaxed preference,
+          # and the exit code being read, judged, and then put back to 0.
           $ErrorActionPreference = 'Continue'
-          gh release view "${{ github.ref_name }}" 2>&1 | Out-Null
-          if ($LASTEXITCODE -eq 0) {
-            throw "a release for ${{ github.ref_name }} already exists. Delete it, or tag a new version."
+          gh release view "${{ steps.version.outputs.tag }}" 2>&1 | Out-Null
+          $exists = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+          if ($exists) {
+            throw "a release for ${{ steps.version.outputs.tag }} already exists. Delete it, or tag a new version."
           }
-          Write-Host "preflight ok: ${{ github.ref_name }} is not yet released on GitHub"
+          Write-Host "preflight ok: ${{ steps.version.outputs.tag }} is not yet released on GitHub"
 
       - name: Release notes from the commits since the last tag
         run: |
-          $previous = git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>$null
-          $range = if ($previous) { "$previous..${{ github.ref_name }}" } else { "${{ github.ref_name }}" }
+          $previous = git describe --tags --abbrev=0 "${{ steps.version.outputs.tag }}^" 2>$null
+          $range = if ($previous) { "$previous..${{ steps.version.outputs.tag }}" } else { "${{ steps.version.outputs.tag }}" }
           $log = git log --no-merges --pretty=format:"- %s" $range
           $notes = if ($log) { $log -join "`n" } else { "No changes recorded." }
           $notes | Set-Content notes.md -Encoding utf8
@@ -144,7 +168,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           Write-Warning 'No signing certificate configured: this release is UNSIGNED.'
-          gh release create "${{ github.ref_name }}" `
+          gh release create "${{ steps.version.outputs.tag }}" `
             --title "LockScreen ${{ steps.version.outputs.version }}" `
             --notes-file notes.md `
             --verify-tag `

@@ -200,6 +200,14 @@ differ in exactly one thing, the releases URL baked in at build time.
   there carries `if: github.server_url == 'https://github.com'` — without it
   the Forgejo tries the GitHub job, fails on its first `uses:`, and every push
   there goes red. Keep that guard on any job you add.
+- **GitHub's pwsh steps end with `exit $LASTEXITCODE`.** A native command that
+  exits non-zero on purpose (`gh release view` for a tag with no release) fails
+  the step unless the code is read and then reset to 0. That is what failed the
+  first GitHub release, v0.2.8, after the Forgejo had already published it.
+- **When one forge publishes a tag and the other fails**, do not re-tag: the
+  Forgejo release is attached to the tag's commit. The GitHub workflow takes a
+  `tag` input on its manual trigger and builds that tag's source with the
+  branch's workflow definition. Actions → Release → Run workflow.
 - **One `origin`, two push URLs.** `git push origin main` lands on both. A push
   is rejected, not forced, when a forge has a commit this clone does not, which
   is what makes both sides safely writable. **Never add a Forgejo push mirror**:
