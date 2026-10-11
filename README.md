@@ -1,5 +1,7 @@
 # LockScreen
 
+![First run, locking, a wrong and a right password, then settings](docs/screenshots/flow.gif)
+
 A configurable lock-screen overlay for Windows 10 (build 17763 or later) and Windows 11. It covers
 every connected monitor and then waits: nothing is asked until a key is pressed or the mouse is
 clicked, at which point the unlock prompt appears and tries Windows
@@ -20,6 +22,66 @@ spoken command as a convenience and a master password as a recovery path.
 > someone casually poking at an unattended desk, not to stop a determined attacker with an account
 > on the machine. If you need an unbypassable lock, the mechanism is a Windows Credential Provider,
 > which this is not. See [Limitations](#limitations).
+
+## Screenshots
+
+These come from the real 0.2.8 binary, cross-compiled and run under Wine on Linux and driven by
+script. Three things therefore differ from a Windows machine: the title bars are drawn by Wine,
+not Windows 11; Windows Hello reports itself unavailable, so the prompt opens at the password box;
+and blur, which needs Windows 11 22H2, is not shown. The translucency is real, put on screen by an
+X compositor.
+
+### First run
+
+There is no default password. Setup asks for two, checks them as you save, and turns itself away
+once the copy is configured, so it can never be used to overwrite a password.
+
+| Choose two passwords | Validated before saving |
+| :-: | :-: |
+| ![The setup window with four empty password boxes](docs/screenshots/setup.png) | ![Setup refusing a three-character unlock password](docs/screenshots/setup-validation.png) |
+| **Stored as Argon2id hashes** | **Refused once set up** |
+| ![Setup complete, both passwords stored as Argon2id hashes](docs/screenshots/setup-complete.png) | ![This copy is already set up; use --settings instead](docs/screenshots/setup-refused.png) |
+
+### Locking the screen
+
+The overlay dims every monitor and asks nothing until a key is pressed or the mouse is clicked.
+
+![The desktop, and the same desktop under the overlay at the default transparency of 0.5](docs/screenshots/overlay.png)
+
+### Unlocking
+
+A key or a click brings up the prompt. Windows Hello is tried first; where it is not set up, as
+here, the prompt goes straight to the password.
+
+![The unlock prompt over the dimmed desktop](docs/screenshots/unlock-prompt.png)
+
+| A wrong password is refused | Master password, for recovery |
+| :-: | :-: |
+| ![That password is not correct](docs/screenshots/wrong-password.png) | ![Enter your master password](docs/screenshots/master-password.png) |
+
+The master password is never offered automatically. Its button appears only once you are at the
+password box.
+
+### Personalisation
+
+The prompt's title and the overlay's darkness are both settings. This is the title
+*Away from desk - back in 10 minutes* at a transparency of `0.80`, with voice unlock turned on,
+which adds the **Unlock by voice** button.
+
+![A custom title, a darker overlay and the Unlock by voice button](docs/screenshots/custom-title-voice.png)
+
+### Settings
+
+Anyone can start `--settings`, so the window authenticates before it opens, and changing a password
+from it asks again before anything is written.
+
+| Authenticate first | Then the settings window |
+| :-: | :-: |
+| ![Authenticate to change settings](docs/screenshots/settings-authenticate.png) | ![Title, transparency, blur, voice, required match, password changes and the update check](docs/screenshots/settings.png) |
+
+### Command line
+
+![The output of --help and --version](docs/screenshots/cli.png)
 
 ## Unlock methods
 
@@ -258,6 +320,7 @@ crates/
     tests/cli.rs        end-to-end, against the built executable
   lockscreen-core/      no windows, therefore testable without one:
                         config, credentials, paths, logging, policy, releases
+docs/screenshots/       the images in this README
 RUST-MIGRATION.md       the port's feasibility study and decision record
 PARITY.md               what is verified, how, and what is still open
 ```
