@@ -35,7 +35,31 @@ use lockscreen_core::release::{self, State, Update, Version};
 use lockscreen_core::{log, paths};
 
 /// Where this copy looks for its own releases.
-const RELEASES_API: &str = "https://git.zacx.net/api/v1/repos/owner/lock-screen/releases?limit=10";
+///
+/// The program is published from two forges -- the self-hosted Forgejo and a
+/// GitHub mirror of the same history -- and a copy must update from the one it
+/// came from. So the URL is fixed **when the program is built**, by whichever
+/// release workflow is building it, through `LOCKSCREEN_RELEASES_API`. A build
+/// with nothing set, which is every local build, reads the Forgejo.
+///
+/// Fixed at build time and not read from `config.ini`, deliberately: a setting
+/// could be pointed anywhere by anyone who can edit the file, and the whole
+/// updater would then install whatever that place served. The build is the
+/// only input the updater trusts about *where* to look. See `build.rs` for the
+/// rebuild guard, which matters on a runner whose target directory is shared
+/// between builds for different forges.
+///
+/// Both forges answer this in the same shape -- Gitea copied GitHub's releases
+/// API and Forgejo kept it -- so nothing else here cares which one it is. The
+/// query differs only in name: `limit` for Forgejo, `per_page` for GitHub.
+pub const RELEASES_API: &str = match option_env!("LOCKSCREEN_RELEASES_API") {
+    Some(url) => url,
+    None => DEFAULT_RELEASES_API,
+};
+
+/// The Forgejo, which is where development happens and where a build with no
+/// `LOCKSCREEN_RELEASES_API` set looks.
+const DEFAULT_RELEASES_API: &str = "https://git.zacx.net/api/v1/repos/owner/lock-screen/releases?limit=10";
 
 /// Nothing the API answers with should be anywhere near this large.
 const MAX_JSON: usize = 1 << 20;
@@ -59,6 +83,10 @@ const _: () = {
 
 /// Ask the forge what it has. Blocking; call it off the UI thread.
 pub fn check() -> State {
+    // Logged, because which forge a copy reads is decided by who built it and
+    // is otherwise invisible: a copy from GitHub that quietly read the Forgejo
+    // would look fine in every other respect.
+    log::info(&format!("checking for updates at {RELEASES_API}"));
     match super::http::get(RELEASES_API, MAX_JSON) {
         Ok(body) => match String::from_utf8(body) {
             Ok(json) => match release::newer_than(&json, Version::running()) {
@@ -182,13 +210,28 @@ pub fn open_page(update: &Update) {
 mod tests {
     use super::*;
 
+    /// Holds for the URL whichever forge is building, so a release workflow
+    /// that set `LOCKSCREEN_RELEASES_API` to something malformed fails its own
+    /// test step rather than shipping a copy that can never update.
     #[test]
     fn the_api_url_is_https_and_names_this_repository() {
         assert!(RELEASES_API.starts_with("https://"), "an update must not be fetched over plain HTTP");
-        assert!(RELEASES_API.contains("/repos/owner/lock-screen/"), "{RELEASES_API}");
-        // A limit, so a forge with hundreds of releases is not all downloaded
-        // to find the newest.
-        assert!(RELEASES_API.contains("limit="), "{RELEASES_API}");
+        assert!(RELEASES_API.contains("/repos/"), "{RELEASES_API}");
+        assert!(RELEASES_API.contains("/lock-screen/releases"), "{RELEASES_API}");
+        // A page size, so a forge with hundreds of releases is not all
+        // downloaded to find the newest. Forgejo and GitHub name it differently.
+        assert!(RELEASES_API.contains("limit=") || RELEASES_API.contains("per_page="), "{RELEASES_API}");
+    }
+
+    /// A local build must read the Forgejo. If this fails, something in the
+    /// environment set `LOCKSCREEN_RELEASES_API`, and every binary built from
+    /// this machine would update from wherever that points.
+    #[test]
+    fn a_build_with_nothing_set_reads_the_forgejo() {
+        if option_env!("LOCKSCREEN_RELEASES_API").is_none() {
+            assert_eq!(RELEASES_API, DEFAULT_RELEASES_API);
+            assert!(DEFAULT_RELEASES_API.starts_with("https://git.zacx.net/api/v1/repos/owner/lock-screen/"));
+        }
     }
 
     #[test]

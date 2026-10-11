@@ -173,6 +173,39 @@ key-holding service. See `PARITY.md` §4. Do not add a self-signed certificate
 to make the step pass: the verification refuses it on purpose, because a
 signature that does not chain to a trusted root looks like assurance and is not.
 
+## Two forges
+
+Since 11 October 2026 the repository lives in two places that hold **one
+history**: the Forgejo at `git.zacx.net/owner/lock-screen`, where development
+happens, and a public mirror on GitHub under a different account. There is no
+sync tool and nothing to transform: the same commits are pushed to both, and
+each forge builds and publishes its own release from them. The two binaries
+differ in exactly one thing, the releases URL baked in at build time.
+
+- **`LOCKSCREEN_RELEASES_API`** is read by `option_env!` in `win/update.rs`.
+  Unset, which is every local build, it is the Forgejo. Each release workflow
+  sets it from its own `github.server_url` and `github.repository`, so a copy
+  updates from the forge it was downloaded from. `build.rs` declares the
+  variable with `rerun-if-env-changed` so the shared CI target directory
+  cannot hand one forge's build the other's object file. Do not make it a
+  config setting: whoever can edit `config.ini` could then point the updater
+  anywhere.
+- **The Forgejo owns the version.** Neither workflow bumps a version or makes a
+  tag; both refuse a tag that disagrees with `Cargo.toml`. A release is still
+  one tag, made here, pushed to both. If GitHub ever bumps versions on its own
+  the two streams diverge within a week.
+- **Workflows live in two directories.** `.forgejo/workflows/` runs on the
+  Forgejo and uses no published actions (forgejo#2809). `.github/workflows/`
+  runs on GitHub. Forgejo reads `.github/workflows/` as well, so every job in
+  there carries `if: github.server_url == 'https://github.com'` — without it
+  the Forgejo tries the GitHub job, fails on its first `uses:`, and every push
+  there goes red. Keep that guard on any job you add.
+- **One `origin`, two push URLs.** `git push origin main` lands on both. A push
+  is rejected, not forced, when a forge has a commit this clone does not, which
+  is what makes both sides safely writable. **Never add a Forgejo push mirror**:
+  it pushes with force and would silently discard anything committed on GitHub.
+  The reverse direction is `scripts/sync-from-github.ps1`, fast-forward only.
+
 ## Credentials
 
 Passwords are **Argon2id verifiers**, never recoverable. The .NET version stores

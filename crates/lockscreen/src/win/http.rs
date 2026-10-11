@@ -10,6 +10,13 @@
 //! path can rewrite -- and note what that does *not* buy: the checksum travels
 //! the same channel as the binary, so this protects against a network attacker
 //! and not against the forge itself. Only Authenticode covers that.
+//!
+//! **Redirects are followed, by WinHTTP, under its default policy**, which is
+//! `WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP`: a redirect to
+//! another HTTPS host is followed, a redirect to plain HTTP is not. That
+//! matters for the GitHub build, whose asset URLs answer 302 to
+//! `objects.githubusercontent.com`; the Forgejo serves its assets directly.
+//! Nothing here sets the policy, so the default is the behaviour relied on.
 
 use windows::Win32::Networking::WinHttp::{
     URL_COMPONENTS, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_INTERNET_SCHEME_HTTPS,

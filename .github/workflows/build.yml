@@ -1,35 +1,26 @@
 name: Build
 
-# The four gates, on every push and pull request. The same four a developer runs
-# locally, so a change that passes there passes here.
+# The four gates on GitHub, for the mirror of this repository there.
 #
-# Nothing below uses a published action: this Forgejo instance cannot fetch them
-# from code.forgejo.org (forgejo#2809), so even the checkout is done by hand.
+# The same four as `.forgejo/workflows/build.yml`, which is the one that runs
+# on the Forgejo where development happens. The two differ only in plumbing:
+# GitHub's runners can fetch published actions, so the checkout and the
+# toolchain are one step each, and there is no persistent target directory to
+# share -- every GitHub-hosted runner is fresh, so a cache action stands in.
+#
+# **The `if:` on the job is not decoration.** Forgejo reads `.github/workflows`
+# as well as `.forgejo/workflows`, so without it this file would also run on
+# the Forgejo, fail on the first `uses:` (that instance cannot fetch published
+# actions, forgejo#2809) and turn every push red. On the Forgejo this job is
+# skipped; on GitHub it runs. `github.server_url` is set on both.
 on:
   push:
     branches: ['**']
   pull_request:
   workflow_dispatch:
 
-# Compiled artifacts live outside the workspace, because the first step of
-# every job wipes the workspace -- the checkout is done by hand, this instance
-# having no published actions to do it. Without this each job was a cold
-# compile of 74 dependencies, three times over: debug for `cargo test`, release
-# for `clippy --all-targets`, release for the build. Releases had grown from
-# 135 seconds to sixteen minutes.
-#
-# Both workflows deliberately point at the **same** directory. A release pushes
-# a branch and then a tag, so build.yml and release.yml run the same four gates
-# on the same commit; sharing the cache means the second one recompiles
-# nothing instead of repeating the first. If they ever overlap, cargo's own
-# lock on the directory serialises them, which is what a single runner does
-# anyway.
-#
-# Forward slashes on purpose: PowerShell and cargo both accept them, and they
-# cannot be mangled by a shell on the way into this file.
 env:
-  CARGO_TARGET_DIR: C:/ci-cache/lock-screen/target
-  # A failed crate download should not fail a release.
+  # A failed crate download should not fail a build.
   CARGO_NET_RETRY: "10"
 
 defaults:
@@ -38,51 +29,18 @@ defaults:
 
 jobs:
   check:
+    if: ${{ github.server_url == 'https://github.com' }}
     runs-on: windows-latest
     steps:
-      - name: Check out this commit
-        env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          Get-ChildItem -Force . | Remove-Item -Recurse -Force
-          git init --quiet --initial-branch=ci .
-          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
-          $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$env:TOKEN"))
-          git -c "http.extraheader=Authorization: Basic $basic" fetch --quiet --depth=1 origin ${{ github.sha }}
-          git checkout --quiet --detach FETCH_HEAD
-          git log --oneline -1
-
-      # The build cache this job depends on, checked before anything needs it.
-      #
-      # Two jobs in one: make sure the directory can exist at all, so a
-      # permissions problem is a named failure here rather than a confusing
-      # cargo error three steps later; and keep it from filling the runner's
-      # disk. It grows by design -- every commit leaves artifacts behind, and
-      # it was 939 MB after a single commit's worth of gates.
-      #
-      # Free space rather than the cache's own size, because measuring free
-      # space is instant while walking a multi-gigabyte tree is not, and
-      # running out of disk is the actual risk. Clearing it costs one cold
-      # build, which is what every job cost before this existed.
-      - name: Build cache
-        run: |
-          New-Item -ItemType Directory -Force $env:CARGO_TARGET_DIR | Out-Null
-          if (-not (Test-Path $env:CARGO_TARGET_DIR)) {
-            throw "$env:CARGO_TARGET_DIR could not be created; the runner may not be able to write there"
-          }
-          $drive = (Get-Item $env:CARGO_TARGET_DIR).PSDrive.Name
-          $free = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)
-          Write-Host "cache at $env:CARGO_TARGET_DIR, $free GB free on ${drive}:"
-          if ($free -lt 10) {
-            Write-Host 'under 10 GB free: clearing the cache, so this build is a cold one'
-            Remove-Item "$env:CARGO_TARGET_DIR/*" -Recurse -Force -ErrorAction SilentlyContinue
-          }
+      - uses: actions/checkout@v4
 
       - name: Use the latest stable Rust
         run: |
           rustup update stable
           rustup default stable
           rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Formatting
         run: cargo fmt --check
@@ -98,10 +56,8 @@ jobs:
         run: cargo build --release --locked
 
       # The binary is the product, so its size is worth watching: the whole
-      # argument for raw Win32 over a GUI toolkit was ~500 KB against ~10 MB,
-      # and a regression there should be visible in the log rather than
-      # discovered at release time.
+      # argument for raw Win32 over a GUI toolkit was ~500 KB against ~10 MB.
       - name: Size
         run: |
-          $exe = Get-Item "$env:CARGO_TARGET_DIR/release/LockScreen.exe"
+          $exe = Get-Item target/release/LockScreen.exe
           "LockScreen.exe {0:N0} bytes ({1:N0} KB)" -f $exe.Length, ($exe.Length / 1KB)

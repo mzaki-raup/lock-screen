@@ -263,6 +263,18 @@ Sign out and Switch user remain reachable if the overlay misbehaves.
     leftover `.old.exe`, or an install that leaves no working program.
     > The empty-list case — `200` with `[]`, which must read as "nothing newer" and not as a failed
     > check — is pinned as a test case and can no longer be reproduced against the live forge.
+23. **A GitHub copy updates from GitHub, and only from there.** Added 11 October 2026, when the
+    repository gained its GitHub mirror; nothing below has been run yet. Download `LockScreen.exe`
+    from a GitHub release, not the Forgejo one, and run settings → check. *Right:* the log line
+    `checking for updates at https://api.github.com/repos/…` names GitHub, and a release that
+    exists only on GitHub is offered. *Then* install it: GitHub answers asset downloads with a `302`
+    to `objects.githubusercontent.com`, which the Forgejo never does, so this is the first time the
+    client's redirect handling is exercised at all. *Failure to watch for:* "the forge answered 302",
+    which would mean WinHTTP's default redirect policy is not what `win/http.rs` says it is.
+24. **Capture GitHub's answer as a fixture.** Once two releases exist on GitHub, save the verbatim
+    response of the `per_page=10` URL beside `forgejo-releases.json` and give it the same test. The
+    unit test in `release.rs` was shaped from the documentation, which is the thing
+    `forgejo_release_compat.rs` exists to distrust.
 
 ---
 

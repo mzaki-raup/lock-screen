@@ -1,0 +1,366 @@
+name: Release
+
+# Tag a commit `v2.0.0` and push the tag: this runs the same gates as build.yml,
+# then publishes the program as a release.
+#
+# What it publishes, and what the in-app updater (phase 07) will read:
+#
+#   LockScreen.exe                       the program, downloaded in place
+#   SHA256SUMS.txt                       checked before anything is replaced
+#   LockScreen-<version>-windows-x64.zip for people who update by hand
+#
+# Without SHA256SUMS.txt the app must refuse to install the release by itself,
+# so never publish one of these without the other.
+#
+# As in build.yml, nothing here uses a published action: this instance cannot
+# fetch them from code.forgejo.org (forgejo#2809).
+#
+# **This forge owns the version.** The history is mirrored to GitHub, which has
+# its own copy of this job in `.github/workflows/release.yml`: same tag, same
+# source, its own build, published there. Neither job bumps a version or makes
+# a tag; both check the tag against Cargo.toml and refuse a mismatch. The only
+# thing the two builds differ in is `LOCKSCREEN_RELEASES_API`, set at the Build
+# step below from this job's own server, so the copy published here updates
+# from here and the copy published on GitHub updates from GitHub.
+#
+# The steps are ordered so that everything cheap runs first: the version check,
+# the publish preflight and the release notes all need nothing but the checkout,
+# and together they take seconds. Only then does the job install a toolchain and
+# build. A release that cannot be published should not spend four minutes
+# finding that out -- which is exactly what v0.1.1 did.
+#
+# **Push the tag on its own**, after the branch has landed:
+#
+#   git push origin main
+#   git push origin v2.0.0
+#
+# Pushing both in one command raises two events at once, and the forge has been
+# seen to end up without its own row for the tag -- which fails the publish step
+# below after every expensive step has already passed. The `target_commitish`
+# there now survives that, but one ref per push is still the habit. With
+# `origin` carrying both push URLs (CLAUDE.md, "Two forges") each of those two
+# commands lands on both forges, and the GitHub job starts on the second one.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Compiled artifacts live outside the workspace, because the first step of
+# every job wipes the workspace -- the checkout is done by hand, this instance
+# having no published actions to do it. Without this each job was a cold
+# compile of 74 dependencies, three times over: debug for `cargo test`, release
+# for `clippy --all-targets`, release for the build. Releases had grown from
+# 135 seconds to sixteen minutes.
+#
+# Both workflows deliberately point at the **same** directory. A release pushes
+# a branch and then a tag, so build.yml and release.yml run the same four gates
+# on the same commit; sharing the cache means the second one recompiles
+# nothing instead of repeating the first. If they ever overlap, cargo's own
+# lock on the directory serialises them, which is what a single runner does
+# anyway.
+#
+# Forward slashes on purpose: PowerShell and cargo both accept them, and they
+# cannot be mangled by a shell on the way into this file.
+env:
+  CARGO_TARGET_DIR: C:/ci-cache/lock-screen/target
+  # A failed crate download should not fail a release.
+  CARGO_NET_RETRY: "10"
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out this tag, with the history the notes need
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Get-ChildItem -Force . | Remove-Item -Recurse -Force
+          git init --quiet --initial-branch=release .
+          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$env:TOKEN"))
+          $auth = "http.extraheader=Authorization: Basic $basic"
+          # Not shallow, and with every tag: the notes below are the commits
+          # since the previous tag.
+          git -c $auth fetch --quiet --tags origin
+          git checkout --quiet --detach ${{ github.sha }}
+          git log --oneline -1
+
+      - name: The tag must match the version in Cargo.toml
+        id: version
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          # The version lives in the workspace manifest, under [workspace.package].
+          $inCargo = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value
+          if ($version -ne $inCargo) {
+            # The app compares the published tag against the version it was
+            # built with, so a mismatch would offer the same update for ever.
+            throw "Tag $tag does not match Cargo.toml version $inCargo"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      # Everything that could stop this release being published, asked now.
+      #
+      # v0.1.1 is why this step exists. It passed rustup, the four gates, the
+      # build, the signing step, the checksums and the archive, and then failed
+      # on the final POST -- four minutes spent to discover something that was
+      # already true when the job started. A release that cannot be published
+      # should say so in seconds, and should say which of these it was.
+      - name: Check now whatever would otherwise fail the publish at the end
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CERT_PFX_BASE64: ${{ secrets.CERT_PFX_BASE64 }}
+        run: |
+          $api = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
+          $headers = @{ Authorization = "token $env:TOKEN" }
+          # The release is titled "LockScreen <version>", unspaced, to match the
+          # things it actually contains -- LockScreen.exe and
+          # LockScreen-<version>-windows-x64.zip -- and like the window captions,
+          # the version line and the VERSIONINFO ProductName, all of which
+          # dropped the space in 0.2.4.
+
+          # 1. The token works and the API is reachable at all.
+          try {
+            $repo = Invoke-RestMethod -Uri $api -Headers $headers -ErrorAction Stop
+          } catch {
+            throw "the repository API could not be read with this job's token: $($_.Exception.Message)"
+          }
+          # A warning, not a failure. The forge does report `permissions` --
+          # an unauthenticated read of this endpoint says `push: false` -- but
+          # whether the Actions token reports `true` there has never been
+          # observed, and a check that blocks every release because it
+          # misreads a field it cannot be sure of is worse than the late
+          # failure it was meant to replace. The authenticated GET below is the
+          # real evidence that this token can talk to the releases API.
+          if ($repo.PSObject.Properties['permissions'] -and -not $repo.permissions.push) {
+            Write-Warning "the API reports no push permission for $($repo.full_name); if the publish step fails, that is why"
+          }
+
+          # 2. Nothing is published for this tag yet. A second release for one
+          #    tag is refused, and that refusal arriving after the build is the
+          #    whole reason for this step.
+          $existing = $null
+          try {
+            $existing = Invoke-RestMethod -Uri "$api/releases/tags/${{ github.ref_name }}" -Headers $headers -ErrorAction Stop
+          } catch {
+            $code = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+            # 404 is the answer we want: nothing released under this tag.
+            if ($code -ne 404) {
+              throw "could not ask whether ${{ github.ref_name }} is already released (HTTP $code): $($_.Exception.Message)"
+            }
+          }
+          if ($existing) {
+            throw "a release for ${{ github.ref_name }} already exists at $($existing.html_url). Delete it, or tag a new version."
+          }
+
+          # 3. If a certificate is configured, the signing step has to be able
+          #    to use it. A malformed secret or a runner with no signtool is
+          #    another thing not worth discovering after a build.
+          if ($env:CERT_PFX_BASE64) {
+            try {
+              [Convert]::FromBase64String($env:CERT_PFX_BASE64) | Out-Null
+            } catch {
+              throw 'CERT_PFX_BASE64 is set but is not valid base64'
+            }
+            $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+            if (-not $signtool) {
+              throw 'a signing certificate is configured but signtool.exe was not found on this runner'
+            }
+          } else {
+            Write-Warning 'No signing certificate configured: this release will be UNSIGNED.'
+          }
+
+          Write-Host "preflight ok: $($repo.full_name) is writable, ${{ github.ref_name }} is not yet released"
+
+      - name: Release notes from the commits since the last tag
+        run: |
+          $previous = git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>$null
+          $range = if ($previous) { "$previous..${{ github.ref_name }}" } else { "${{ github.ref_name }}" }
+          $log = git log --no-merges --pretty=format:"- %s" $range
+          $notes = if ($log) { $log -join "`n" } else { "No changes recorded." }
+          $notes | Set-Content notes.md -Encoding utf8
+          Get-Content notes.md
+
+      # The build cache this job depends on, checked before anything needs it.
+      #
+      # Two jobs in one: make sure the directory can exist at all, so a
+      # permissions problem is a named failure here rather than a confusing
+      # cargo error three steps later; and keep it from filling the runner's
+      # disk. It grows by design -- every commit leaves artifacts behind, and
+      # it was 939 MB after a single commit's worth of gates.
+      #
+      # Free space rather than the cache's own size, because measuring free
+      # space is instant while walking a multi-gigabyte tree is not, and
+      # running out of disk is the actual risk. Clearing it costs one cold
+      # build, which is what every job cost before this existed.
+      - name: Build cache
+        run: |
+          New-Item -ItemType Directory -Force $env:CARGO_TARGET_DIR | Out-Null
+          if (-not (Test-Path $env:CARGO_TARGET_DIR)) {
+            throw "$env:CARGO_TARGET_DIR could not be created; the runner may not be able to write there"
+          }
+          $drive = (Get-Item $env:CARGO_TARGET_DIR).PSDrive.Name
+          $free = [math]::Round((Get-PSDrive $drive).Free / 1GB, 1)
+          Write-Host "cache at $env:CARGO_TARGET_DIR, $free GB free on ${drive}:"
+          if ($free -lt 10) {
+            Write-Host 'under 10 GB free: clearing the cache, so this build is a cold one'
+            Remove-Item "$env:CARGO_TARGET_DIR/*" -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Use the latest stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      # The gates run with the same variable as the build, so the test that
+      # checks the baked-in URL checks the one this release will carry.
+      - name: Tests
+        env:
+          LOCKSCREEN_RELEASES_API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases?limit=10
+        run: cargo test --locked
+
+      - name: Clippy
+        env:
+          LOCKSCREEN_RELEASES_API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases?limit=10
+        run: cargo clippy --release --all-targets --locked -- -D warnings
+
+      # Where the built copy looks for its updates: this forge, derived from
+      # the job's own server and repository rather than written out. It is the
+      # same value the source defaults to, set explicitly so that this job and
+      # the GitHub one are visibly the same shape, and so that a rename of the
+      # repository cannot ship copies that update from the old name. The
+      # shared target directory is safe: build.rs declares the variable, so a
+      # build for the other forge does not reuse this one's objects.
+      - name: Build
+        env:
+          LOCKSCREEN_RELEASES_API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases?limit=10
+        run: cargo build --release --locked
+
+      # Authenticode. The only thing that protects an install against a
+      # compromise of this forge: SHA256SUMS travels the same channel as the
+      # binary, so an attacker who can publish a release can publish both.
+      # Windows checks the publisher at launch however the file arrived.
+      #
+      # Skipped, with a warning in the log, when no certificate is configured --
+      # so a release is still possible before one exists, and it is obvious in
+      # the job output which releases are unsigned.
+      #
+      # **What a `.pfx` in a secret can and cannot be.** This step takes the
+      # certificate as base64 in `CERT_PFX_BASE64`, which works for a
+      # self-signed or internal-CA certificate. It cannot work for a publicly
+      # trusted one: since June 2023 the CA/Browser Forum baseline requirements
+      # oblige code-signing keys to be generated and held in hardware (FIPS
+      # 140-2 Level 2 or equivalent), so no CA will issue an exportable PFX for
+      # an OV or EV certificate any more. A trusted signature from CI therefore
+      # needs a signing *service* that holds the key -- Azure Trusted Signing,
+      # DigiCert KeyLocker, SSL.com eSigner and the like -- or a hardware token,
+      # which does not suit an unattended runner. Whichever is chosen replaces
+      # the `/f` and `/p` arguments below; everything else here stays.
+      #
+      # The mechanics were verified against a throwaway self-signed certificate
+      # rather than guessed at: the base64 round-trip, the signtool discovery,
+      # the command line and the DigiCert timestamp server all work. What a
+      # self-signed certificate cannot do is pass the verification below.
+      - name: Sign
+        env:
+          CERT_PFX_BASE64: ${{ secrets.CERT_PFX_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          if (-not $env:CERT_PFX_BASE64) {
+            Write-Warning "No signing certificate configured: this release will be UNSIGNED."
+            Write-Warning "Set the CERT_PFX_BASE64 and CERT_PASSWORD secrets to sign it."
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_PFX_BASE64))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw 'signtool.exe not found on the runner' }
+
+          & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            /f $pfx /p $env:CERT_PASSWORD "$env:CARGO_TARGET_DIR/release/LockScreen.exe"
+          $signed = $LASTEXITCODE
+          # Removed before the result is acted on, so the key does not outlive
+          # this step even when the signing failed. The runner is ephemeral
+          # anyway; this does not rely on that.
+          Remove-Item $pfx -Force
+          if ($signed -ne 0) { throw "signtool sign failed with exit code $signed" }
+
+          # Verified, and a failure explained rather than left as a bare exit
+          # code. signtool returns 1 when the chain does not terminate in a root
+          # this runner trusts, which is exactly what a self-signed certificate
+          # produces -- the file *is* signed, and Windows still shows "Unknown
+          # Publisher" to everyone who runs it. Publishing that as a signed
+          # release would be worse than publishing an unsigned one, because it
+          # looks like something it is not. So it stops here.
+          & $signtool verify /pa /v "$env:CARGO_TARGET_DIR/release/LockScreen.exe"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host 'The file was signed, but the signature does not chain to a root this runner trusts.'
+            Write-Host 'Windows would still show "Unknown Publisher" to everyone who runs it, so this'
+            Write-Host 'release is not being published as signed. A self-signed or internal-CA'
+            Write-Host 'certificate does exactly this -- see the comment above this step.'
+            throw 'the signature did not verify against a trusted root'
+          }
+          Write-Host 'signed, timestamped, and verified against a trusted root'
+
+      - name: Checksums and archive
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item "$env:CARGO_TARGET_DIR/release/LockScreen.exe" dist/
+          Copy-Item README.md dist/
+          $zip = "LockScreen-${{ steps.version.outputs.version }}-windows-x64.zip"
+          Compress-Archive -Path dist/LockScreen.exe, dist/README.md -DestinationPath "dist/$zip"
+          Remove-Item dist/README.md
+          # `sha256sum` layout, which the updater parses.
+          Get-ChildItem dist -File | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Publish the release
+        env:
+          # Forgejo hands the workflow a token with write access to this
+          # repository; the API below is its /api/v1, not GitHub's. Who the
+          # release is shown as coming from does not depend on this token: the
+          # forge matches the tag's own author email to an account, so a tag
+          # made with an email that account does not own is published by
+          # "Ghost".
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $api = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
+          $headers = @{ Authorization = "token $env:TOKEN" }
+          # `target_commitish` is not optional in practice, even though the
+          # tag always exists in git by the time this runs. Forgejo keeps its
+          # own row per tag, and when a branch and a tag arrive in the same
+          # `git push` that row can be missing while `/tags` still lists the
+          # tag -- at which point this POST is refused with
+          # "Release is has no Tag" after the build has already succeeded.
+          # Naming the commit lets the forge attach the release itself instead
+          # of depending on that row. See the header comment: push the tag as
+          # its own push, too.
+          $body = @{
+            tag_name         = "${{ github.ref_name }}"
+            target_commitish = "${{ github.sha }}"
+            name             = "LockScreen ${{ steps.version.outputs.version }}"
+            body             = (Get-Content notes.md -Raw)
+            draft            = $false
+            prerelease       = $false
+          } | ConvertTo-Json
+          $release = Invoke-RestMethod -Method Post -Uri "$api/releases" -Headers $headers `
+            -ContentType 'application/json' -Body $body
+          Write-Host "Release $($release.id) created at $($release.html_url)"
+          foreach ($file in Get-ChildItem dist -File) {
+            $uri = "$api/releases/$($release.id)/assets?name=$([uri]::EscapeDataString($file.Name))"
+            Invoke-RestMethod -Method Post -Uri $uri -Headers $headers -Form @{ attachment = Get-Item $file.FullName } | Out-Null
+            Write-Host "Attached $($file.Name)"
+          }

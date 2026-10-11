@@ -18,6 +18,14 @@ fn main() {
     // on its own, and a stale resource would claim the wrong version.
     println!("cargo:rerun-if-changed=../../Cargo.toml");
     println!("cargo:rerun-if-env-changed=CARGO_PKG_VERSION");
+    // Where the built copy looks for updates is baked in by `win::update` from
+    // this variable. Declared here as well as read there because the CI runner
+    // shares one target directory between every build, and a release for one
+    // forge must not reuse an object file compiled for the other. rustc records
+    // `option_env!` reads of its own, so this is belt and braces -- but a copy
+    // that updates from the wrong forge is the kind of failure that is found by
+    // a user, months later, and not by a test.
+    println!("cargo:rerun-if-env-changed=LOCKSCREEN_RELEASES_API");
 
     emit_build_provenance();
 

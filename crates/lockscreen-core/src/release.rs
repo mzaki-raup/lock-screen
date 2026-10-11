@@ -243,6 +243,47 @@ mod tests {
         )
     }
 
+    /// GitHub's answer, with the fields it adds that Forgejo does not and the
+    /// `per_page` paging that the GitHub build asks for. The parser must read
+    /// it unchanged: the GitHub release workflow builds the very same source,
+    /// and the only difference between the two copies is the URL baked in.
+    ///
+    /// Shaped from the documented GitHub REST response rather than captured
+    /// from the mirror, which did not exist when this was written. PARITY.md
+    /// carries the item to replace it with a verbatim fixture once a release
+    /// has been published there, as `forgejo_release_compat.rs` does.
+    #[test]
+    fn a_github_shaped_answer_reads_the_same_as_a_forgejo_one() {
+        let json = r#"[{
+            "url": "https://api.github.com/repos/u/lock-screen/releases/1",
+            "assets_url": "https://api.github.com/repos/u/lock-screen/releases/1/assets",
+            "upload_url": "https://uploads.github.com/repos/u/lock-screen/releases/1/assets{?name,label}",
+            "html_url": "https://github.com/u/lock-screen/releases/tag/v9.0.0",
+            "id": 1, "node_id": "RE_x", "tag_name": "v9.0.0", "target_commitish": "main",
+            "name": "LockScreen 9.0.0", "draft": false, "prerelease": false,
+            "created_at": "2026-10-11T00:00:00Z", "published_at": "2026-10-11T00:00:00Z",
+            "author": {"login": "u", "id": 1, "type": "User"},
+            "assets": [
+              {"url": "https://api.github.com/repos/u/lock-screen/releases/assets/1", "id": 1,
+               "name": "LockScreen.exe", "label": "", "content_type": "application/octet-stream",
+               "state": "uploaded", "size": 580000, "download_count": 0,
+               "browser_download_url": "https://github.com/u/lock-screen/releases/download/v9.0.0/LockScreen.exe"},
+              {"url": "https://api.github.com/repos/u/lock-screen/releases/assets/2", "id": 2,
+               "name": "SHA256SUMS.txt", "label": "", "content_type": "text/plain",
+               "state": "uploaded", "size": 200, "download_count": 0,
+               "browser_download_url": "https://github.com/u/lock-screen/releases/download/v9.0.0/SHA256SUMS.txt"}
+            ],
+            "tarball_url": "https://api.github.com/repos/u/lock-screen/tarball/v9.0.0",
+            "zipball_url": "https://api.github.com/repos/u/lock-screen/zipball/v9.0.0",
+            "body": "- a change"
+        }]"#;
+        let update = newer_than(json, v(0, 1, 0)).expect("a GitHub release should be offered");
+        assert_eq!(update.version, v(9, 0, 0));
+        assert_eq!(update.page, "https://github.com/u/lock-screen/releases/tag/v9.0.0");
+        assert_eq!(update.exe.url, "https://github.com/u/lock-screen/releases/download/v9.0.0/LockScreen.exe");
+        assert!(update.installable(), "both assets are there, so it must be installable");
+    }
+
     #[test]
     fn versions_parse_with_or_without_the_tag_prefix() {
         assert_eq!(Version::parse("v2.0.1"), Some(v(2, 0, 1)));

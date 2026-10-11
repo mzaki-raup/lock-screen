@@ -63,8 +63,13 @@ settings window, which asks you to authenticate first.
 
 ## Install
 
-Download the zip from the [releases page](https://git.zacx.net/owner/lock-screen/releases), unpack
-it anywhere you can write, and run it. That is the whole install.
+Download the zip from the [releases page](https://git.zacx.net/owner/lock-screen/releases), or from
+the [GitHub mirror](https://github.com/mzaki-raup/lock-screen/releases), unpack it anywhere you can
+write, and run it. That is the whole install.
+
+The two are the same program at the same version, built from the same commit. The one difference
+is where a copy looks for its own updates: a copy from GitHub checks GitHub, a copy from
+git.zacx.net checks git.zacx.net. Neither ever reads the other.
 
 ```
 LockScreen.exe            the program
@@ -176,6 +181,8 @@ Settings → check for updates. Deliberately dull, and deliberately manual:
   the old name back**, so a failed update leaves a working program rather than none at all.
 - It does not restart itself. Close the window and start it again — relaunching could put the
   *overlay* back up, and restarting a lock screen mid-session is a bypass rather than a convenience.
+- **Where it looks is fixed when the program is built**, not read from `config.ini`, so nobody who
+  can edit that file can point the updater somewhere else. The log records the URL on every check.
 
 Releases are **not currently Authenticode-signed** (see [Limitations](#limitations)).
 
