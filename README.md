@@ -1,5 +1,13 @@
 # LockScreen
 
+<p align="center">
+  <a href="https://github.com/mzaki-raup/lock-screen/releases"><img src="https://img.shields.io/github/downloads/mzaki-raup/lock-screen/total?style=for-the-badge&color=5F4B87&labelColor=14161A" alt="Downloads"></a>
+  <a href="https://github.com/mzaki-raup/lock-screen/releases/latest"><img src="https://img.shields.io/github/v/release/mzaki-raup/lock-screen?style=for-the-badge&color=5F4B87&labelColor=14161A" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/mzaki-raup/lock-screen?style=for-the-badge&color=5F4B87&labelColor=14161A" alt="License"></a>
+  <a href="https://github.com/mzaki-raup/lock-screen/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/mzaki-raup/lock-screen/build.yml?style=for-the-badge&color=5F4B87&labelColor=14161A" alt="Build"></a>
+  <a href="https://github.com/mzaki-raup/lock-screen/stargazers"><img src="https://img.shields.io/github/stars/mzaki-raup/lock-screen?style=for-the-badge&color=5F4B87&labelColor=14161A" alt="Stars"></a>
+</p>
+
 ![First run, locking, a wrong and a right password, then settings](docs/screenshots/flow.gif)
 
 A configurable lock-screen overlay for Windows 10 (build 17763 or later) and Windows 11. It covers
